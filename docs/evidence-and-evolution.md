@@ -1,6 +1,4 @@
-# C01 Engineering Spike
-
-**Zvolená varianta:** A – Persistence
+# C01 Engineering Spike - A – Persistence
 
 ## Question / unknown
 Umíme rezervaci skutečně uložit do databáze, znovu ji načíst a ověřit,
@@ -30,6 +28,7 @@ scénáře odpovídaly očekávání:
 - rezervace bez dostatečné pauzy byla zamítnuta
 - platná rezervace byla úspěšně uložena a po znovunačtení z DB odpovídala
   vloženým datům
+
 
 ## Decision / what changes because of the result
 Business pravidla (overlap + pauza) fungují spolehlivě už na úrovni

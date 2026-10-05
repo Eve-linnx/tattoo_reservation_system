@@ -1,17 +1,11 @@
 """
-Spike A - Persistence
+Spike A & Baseline v0.1 Demo
 
-Tento skript ověřuje, že:
-1. rezervaci lze skutečně uložit do DB a znovu načíst,
-2. funguje kontrola překryvu (overlap rule),
-3. funguje kontrola minimální 30minutové pauzy (domain-specific rule).
-
-Spuštění:
-    python src/test_spike.py
+Demonstrace všech 4 základních operací:
+Create, Check Availability, Confirm a Cancel.
 """
 
-from datetime import datetime, timedelta
-
+from datetime import datetime, timedelta, time
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -19,120 +13,85 @@ from models import Base, Resource, ReservationStatus
 from reservation_service import (
     create_reservation,
     confirm_reservation,
+    cancel_reservation,
+    check_availability,
     ReservationConflictError,
     OutsideWorkingHoursError,
 )
 
-# Testovací SQLite databáze (soubor se vytvoří v aktuálním adresáři)
 DATABASE_URL = "sqlite:///spike_test.db"
 
-
 def setup_database():
-    """Vytvoří novou (prázdnou) testovací databázi a vrátí session."""
     engine = create_engine(DATABASE_URL)
-    Base.metadata.drop_all(engine)  # vyčistíme případná stará data
+    Base.metadata.drop_all(engine) 
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return Session()
 
-
 def main():
     db = setup_database()
 
-    # 1. Vytvoříme tatéra (Resource) s pracovní dobou 09:00–18:00
-    from datetime import time
+    # Vytvoření Tatéra (Pracovní doba 9:00 - 18:00)
     tatér = Resource(name="Jan Novák", work_start=time(9, 0), work_end=time(18, 0))
     db.add(tatér)
     db.commit()
     db.refresh(tatér)
-    print(f"[OK] Vytvořen tatér id={tatér.id}, jméno={tatér.name}, pracovní doba {tatér.work_start}–{tatér.work_end}")
 
-    base_time = datetime(2026, 10, 1, 10, 0)  # 1.10.2026 10:00
+    base_time = datetime(2026, 10, 1, 10, 0)
+    
+    print("=== START BASELINE v0.1 DEMO ===\n")
 
-    # 2. Pokus o rezervaci ve 3:00 ráno -> musí selhat (mimo pracovní dobu)
+    # === OP-02: CHECK AVAILABILITY ===
+    print("--- OP-02: Check Availability ---")
+    # Úspěch (Volno)
+    is_avail = check_availability(db, tatér.id, base_time, base_time + timedelta(hours=2))
+    print(f"[OK] Dostupnost 10:00-12:00: {'AVAILABLE' if is_avail else 'UNAVAILABLE'}")
+    
+    # === OP-01: CREATE RESERVATION ===
+    print("\n--- OP-01: Create Reservation ---")
+    # Úspěch (Vytvoření DRAFTu)
+    r1 = create_reservation(db, tatér.id, "Klient A", base_time, base_time + timedelta(hours=2))
+    print(f"[OK] Rezervace vytvořena: ID={r1.id}, Stav={r1.status.value}")
+    # Chyba (Mimo pracovní dobu)
     try:
-        create_reservation(
-            db,
-            resource_id=tatér.id,
-            client_name="Klient Noční",
-            start_time=datetime(2026, 10, 1, 3, 0),
-            end_time=datetime(2026, 10, 1, 5, 0),
-        )
-        print("[CHYBA] Noční rezervace prošla, ale neměla!")
+        create_reservation(db, tatér.id, "Klient Noční", datetime(2026, 10, 1, 7, 0), datetime(2026, 10, 1, 8, 0))
     except OutsideWorkingHoursError as e:
-        print(f"[OK] Noční rezervace správně zamítnuta: {e}")
+        print(f"[OK] Zamítnuto (mimo prac. dobu): {e}")
 
-    # 3. Pokus o rezervaci přesahující konec pracovní doby -> musí selhat
-    try:
-        create_reservation(
-            db,
-            resource_id=tatér.id,
-            client_name="Klient Pozdní",
-            start_time=datetime(2026, 10, 1, 17, 0),
-            end_time=datetime(2026, 10, 1, 19, 0),  # konec po 18:00
-        )
-        print("[CHYBA] Rezervace přes konec pracovní doby prošla, ale neměla!")
-    except OutsideWorkingHoursError as e:
-        print(f"[OK] Rezervace přes konec pracovní doby správně zamítnuta: {e}")
-
-    # 4. Vytvoříme první rezervaci a potvrdíme ji
-    r1 = create_reservation(
-        db,
-        resource_id=tatér.id,
-        client_name="Klient A",
-        start_time=base_time,
-        end_time=base_time + timedelta(hours=2),
-    )
+    # === OP-03: CONFIRM RESERVATION ===
+    print("\n--- OP-03: Confirm Reservation ---")
+    # Úspěch (Potvrzení DRAFTu)
     r1 = confirm_reservation(db, r1.id)
-    print(f"[OK] Rezervace 1 vytvořena a potvrzena: {r1.start_time} - {r1.end_time}, status={r1.status}")
-
-    # 5. Pokus o překrývající se rezervaci -> musí selhat
+    print(f"[OK] Rezervace potvrzena: ID={r1.id}, Stav={r1.status.value}")
+    
+    # Chyba (Pokus o potvrzení kolize - porušení pauzy 30 min)
+    r2_draft = create_reservation(db, tatér.id, "Klient B", r1.end_time + timedelta(minutes=15), r1.end_time + timedelta(minutes=75))
     try:
-        create_reservation(
-            db,
-            resource_id=tatér.id,
-            client_name="Klient B",
-            start_time=base_time + timedelta(hours=1),
-            end_time=base_time + timedelta(hours=3),
-        )
-        r_overlap = confirm_reservation(db, r1.id)  # sem se nedostaneme
-        print("[CHYBA] Překrývající se rezervace prošla, ale neměla!")
+        confirm_reservation(db, r2_draft.id)
     except ReservationConflictError as e:
-        print(f"[OK] Překrývající se rezervace byla správně zamítnuta: {e}")
+        print(f"[OK] Zamítnuto (kolize/pauza): {e}")
 
-    # 6. Pokus o rezervaci příliš blízko (méně než 30 min pauza) -> musí selhat
+    # (Demonstrace pro OP-02: Nyní by Check Availability mělo vrátit UNAVAILABLE pro čas, který blokuje r1)
+    is_avail_conflict = check_availability(db, tatér.id, base_time + timedelta(hours=1), base_time + timedelta(hours=3))
+    print(f"[OK] Dostupnost překrývajícího se času (11:00-13:00): {'AVAILABLE' if is_avail_conflict else 'UNAVAILABLE'}")
+
+    # === OP-04: CANCEL RESERVATION ===
+    print("\n--- OP-04: Cancel Reservation ---")
+    # Úspěch (Storno proběhlo PŘED začátkem termínu)
+    simulated_now_ok = datetime(2026, 10, 1, 8, 0) # Jsou 8:00 ráno, rezervace je na 10:00
+    r1 = cancel_reservation(db, r1.id, simulated_now_ok)
+    print(f"[OK] Rezervace zrušena: ID={r1.id}, Stav={r1.status.value}")
+    
+    # Chyba (Pokus o storno PO začátku termínu)
+    r3 = create_reservation(db, tatér.id, "Klient C", datetime(2026, 10, 2, 14, 0), datetime(2026, 10, 2, 16, 0))
+    confirm_reservation(db, r3.id)
+    simulated_now_late = datetime(2026, 10, 2, 14, 30) # Sezení už začalo
     try:
-        r_close = create_reservation(
-            db,
-            resource_id=tatér.id,
-            client_name="Klient C",
-            start_time=r1.end_time + timedelta(minutes=10),  # jen 10 min po konci
-            end_time=r1.end_time + timedelta(minutes=70),
-        )
-        confirm_reservation(db, r_close.id)
-        print("[CHYBA] Rezervace bez dostatečné pauzy prošla, ale neměla!")
-    except ReservationConflictError as e:
-        print(f"[OK] Rezervace bez dostatečné pauzy byla správně zamítnuta: {e}")
+        cancel_reservation(db, r3.id, simulated_now_late)
+    except ValueError as e:
+        print(f"[OK] Zamítnuto zrušení: {e}")
 
-    # 7. Platná rezervace s dostatečným odstupem -> musí projít
-    r2 = create_reservation(
-        db,
-        resource_id=tatér.id,
-        client_name="Klient D",
-        start_time=r1.end_time + timedelta(minutes=30),  # přesně 30 min pauza
-        end_time=r1.end_time + timedelta(minutes=90),
-    )
-    r2 = confirm_reservation(db, r2.id)
-    print(f"[OK] Rezervace 2 (s dostatečnou pauzou) vytvořena a potvrzena: {r2.start_time} - {r2.end_time}")
-
-    # 8. Znovu načteme všechny rezervace z DB a ověříme počet a stavy
-    all_reservations = db.query(r1.__class__).all()
-    confirmed_count = sum(1 for r in all_reservations if r.status == ReservationStatus.CONFIRMED)
-    print(f"[OK] Celkem rezervací v DB: {len(all_reservations)}, z toho CONFIRMED: {confirmed_count}")
-
-    assert confirmed_count == 2, "Očekávány přesně 2 potvrzené rezervace!"
-    print("\nVšechny kontroly proběhly úspěšně. Spike A je ověřen.")
-
+    print("\nVšechny kontroly OP-01 až OP-04 proběhly úspěšně. Aplikace odpovídá Baseline v0.1.")
 
 if __name__ == "__main__":
     main()

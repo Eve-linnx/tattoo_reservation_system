@@ -151,11 +151,20 @@ def confirm_reservation(db: Session, reservation_id: int) -> Reservation:
     return reservation
 
 
-def cancel_reservation(db: Session, reservation_id: int) -> Reservation:
-    """Zruší rezervaci (status -> CANCELLED)."""
+def cancel_reservation(db: Session, reservation_id: int, current_time: datetime) -> Reservation:
+    """
+    Zruší rezervaci (status -> CANCELLED).
+    Podle BR-03: Zrušit lze pouze před časem začátku (now < start).
+    """
     reservation = db.query(Reservation).get(reservation_id)
     if reservation is None:
         raise ValueError(f"Rezervace id={reservation_id} neexistuje.")
+
+    if reservation.status == ReservationStatus.CANCELLED:
+        return reservation # BR-03: idempotentní úspěch
+
+    if current_time >= reservation.start_time:
+        raise ValueError("Rezervaci nelze zrušit, protože její čas začátku již nastal nebo uplynul.")
 
     reservation.status = ReservationStatus.CANCELLED
     db.commit()

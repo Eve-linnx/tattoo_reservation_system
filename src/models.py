@@ -23,10 +23,12 @@ Base = declarative_base()
 
 
 class ReservationStatus(str, enum.Enum):
-    """Možné stavy rezervace."""
-    DRAFT = "DRAFT"
+    """Možné stavy rezervace ve v0.2."""
+    PENDING_APPROVAL = "PENDING_APPROVAL" # Nahradilo DRAFT
     CONFIRMED = "CONFIRMED"
     CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"                 # zamítnuto tatérem
+    EXPIRED = "EXPIRED"                   # vypršel čas na schválení
 
 
 class Resource(Base):
@@ -50,7 +52,7 @@ class Reservation(Base):
     client_name = Column(String, nullable=False)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
-    status = Column(Enum(ReservationStatus), default=ReservationStatus.DRAFT, nullable=False)
+    status = Column(Enum(ReservationStatus), default=ReservationStatus.PENDING_APPROVAL, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     resource = relationship("Resource", back_populates="reservations")

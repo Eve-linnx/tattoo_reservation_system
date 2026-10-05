@@ -36,3 +36,22 @@ persistence vrstvy, takže je nebudeme duplikovat v API vrstvě (FastAPI
 endpoint bude pouze volat `create_reservation` a případnou výjimku
 převede na HTTP chybu). Tím se pravidlo definuje jen na jednom místě
 a walking skeleton (C03/C04) na tuto funkci může přímo navázat.
+
+---
+
+## C02 - Evidence a evoluce (Baseline v0.2)
+
+Tento blok mapuje, jakým způsobem jsou požadavky a doménová pravidla ze specifikací (Baseline v0.2) implementovány v běžícím kódu, a shrnuje evoluci architektury.
+
+### 1. Mapování specifikace na kód (Traceability)
+* **BR-01 (Interval semantics):** Implementováno v pomocných funkcích `_overlaps` a `_too_close` a pojistkou na začátku `create_reservation` (konec musí být po začátku).
+* **BR-02 (Exclusive Resource) a BR-04 (Minimální pauza):** Implementováno v `check_availability`, `create_reservation` a `approve_reservation` dotazem na stávající `CONFIRMED` rezervace a kontrolou limitu `MIN_PAUSE_MINUTES = 30`.
+* **BR-03 (Cancellation policy):** Implementováno uvnitř metody `cancel_reservation`. Metoda kontroluje, zda je `current_time` před časem začátku.
+* **BR-05 (Pracovní doba):** Vynuceno pomocí metody `_check_working_hours`, volané při `create_reservation`.
+* **REQ-07 (Expirace žádostí):** Implementováno metodou `expire_old_reservations`, která překlápí `PENDING_APPROVAL` žádosti starší než 24 hodin do `EXPIRED`.
+* **REQ-08 (Kontrola při schvalování):** Implementováno v metodě `approve_reservation`. Systém těsně před schválením (`is_approved=True`) znovu ověří kolize vůči již potvrzeným rezervacím.
+
+### 2. Evoluce: Změna z v0.1 na v0.2
+* **Změna stavů (models.py):** Stav `DRAFT` byl nahrazen za `PENDING_APPROVAL`. Byly přidány nové koncové stavy `REJECTED` (pro zamítnutí) a `EXPIRED` (vypršení).
+* **Úprava byznys logiky (reservation_service.py):** Zanikla metoda `confirm_reservation`. Vznikla nová metoda `approve_reservation`, kterou ovládá tatér (parametr `is_approved`).
+* **Nový architektonický driver (Časovač):** Pro splnění požadavku REQ-07 byla naprogramována metoda `expire_old_reservations`. Do budoucna (C03) se počítá s jejím automatizovaným spouštěním na pozadí.

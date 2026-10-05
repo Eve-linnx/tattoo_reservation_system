@@ -1,9 +1,9 @@
-# Diagramy — Baseline v0.1
+# Diagramy — Baseline v0.2
 
 Tento dokument doplňuje textovou specifikaci (`reservation-create.md`,
-`reservation-check-availability.md`, `reservation-confirm.md`,
+`reservation-check-availability.md`, `reservation-approve.md`,
 `reservation-cancel.md`, `reservation-rules.md`) o vizuální pohled na
-systém.
+systém, zohledňující změnu C02 (schvalovací proces).
 
 ---
 
@@ -11,9 +11,9 @@ systém.
 
 Aktéři:
 - **Klient** — vytváří rezervaci, zjišťuje dostupnost, ruší rezervaci.
-- **Tatér** — potvrzuje rezervaci, může rezervaci zrušit.
+- **Tatér** — schvaluje/zamítá rezervaci, zjišťuje dostupnost, může rezervaci zrušit.
 - **Notification Service** — podpůrný externí aktér; dostává podnět po
-  potvrzení rezervace. Není to interní komponenta, proto je v diagramu.
+  schválení nebo zrušení rezervace. Není to interní komponenta, proto je v diagramu.
 
 ```mermaid
 flowchart LR
@@ -25,26 +25,23 @@ flowchart LR
         direction TB
         UC1(["Vytvořit rezervaci"])
         UC2(["Zjistit dostupnost"])
-        UC3(["Potvrdit rezervaci"])
+        UC3(["Schválit / Zamítnout (Approve)"])
         UC4(["Zrušit rezervaci"])
     end
 
     Klient --> UC1
     Klient --> UC2
     Klient --> UC4
+    Tater --> UC2
     Tater --> UC3
     Tater --> UC4
-    UC3 -.notifikace po potvrzení.-> Notifikace
+    UC3 -.notifikace po schválení.-> Notifikace
+    UC4 -.notifikace po zrušení.-> Notifikace
 ```
 
 Poznámky ke konzistenci:
-- Čtyři cíle odpovídají přesně čtyřem operacím OP-01 až OP-04.
-- Cancel má oba aktéry (Klient i Tatér), protože specifikace (BR-03)
-  neomezuje zrušení jen na klienta — pokud by to tak v doméně nemělo být,
-  je potřeba to v textu explicitně říct a diagram podle toho zúžit.
-- Notification Service je jen navázaný na Confirm, ne na ostatní operace,
-  protože to tak popisuje `intent-and-change.md`. Nejde o `include`/`extend`,
-  jen o vazbu na externí systém.
+- Operace Confirm zanikla jako samostatný uživatelský případ a stala se součástí procesu Approve (OP-05).
+- Cancel má oba aktéry (Klient i Tatér), protože specifikace (BR-03) neomezuje zrušení jen na klienta.
 
 ---
 
@@ -52,32 +49,29 @@ Poznámky ke konzistenci:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> DRAFT : create (OP-01)
+    [*] --> PENDING_APPROVAL : create (OP-01)
 
-    DRAFT --> CONFIRMED : confirm [REQ-03: aktivní Resource,\nžádná kolize podle BR-02/BR-04]
-    DRAFT --> CANCELLED : cancel [REQ-05: now < start]
+    PENDING_APPROVAL --> CONFIRMED : approve [REQ-08: schváleno tatérem,\nžádná kolize podle BR-02/BR-04]
+    PENDING_APPROVAL --> REJECTED : approve [zamítnuto tatérem]
+    PENDING_APPROVAL --> EXPIRED : expire [REQ-07: uplynulo 24h bez reakce]
+    
+    PENDING_APPROVAL --> CANCELLED : cancel [REQ-05: now < start]
     CONFIRMED --> CANCELLED : cancel [REQ-05: now < start]
 
-    note left of DRAFT
-        confirm zamítnuto (kolize / neplatný
-        zdrojový stav) → stav zůstává DRAFT,
-        proto v diagramu není žádná šipka zpět.
+    note right of PENDING_APPROVAL
+        Stav PENDING_APPROVAL neblokuje
+        kapacitu závazně.
     end note
 
-    note right of CANCELLED
-        Opakované cancel na již CANCELLED
-        rezervaci je dle BR-03 idempotentní
-        úspěch — stav se nemění, proto
-        v diagramu není smyčka CANCELLED→CANCELLED.
+    note left of CANCELLED
+        CANCELLED, REJECTED a EXPIRED
+        jsou koncové stavy.
     end note
 ```
 
 Kontrola konzistence s textem:
-- Text (OP-04, BR-03) umožňuje zrušit DRAFT i CONFIRMED před `start` →
-  diagram má obě šipky do CANCELLED. 
-- Text nedovoluje cancel po/při `start` a nedovoluje confirm zpět do DRAFT
-  → diagram žádné takové přechody nekreslí. 
-- CANCELLED je koncový stav (žádné další přechody z něj nevedou).
+- Text nově počítá s tím, že rezervace po vytvoření čeká na schválení tatérem (přechod z Create do PENDING_APPROVAL).
+- Text (OP-04, BR-03) umožňuje zrušit PENDING_APPROVAL i CONFIRMED před start → diagram má obě šipky do CANCELLED.
 
 ---
 
@@ -95,8 +89,8 @@ flowchart TD
     D -- Ne --> X1
     D -- Ano --> Ff{Koliduje s CONFIRMED rezervací? BR-02/BR-04}
     Ff -- Ano --> X1
-    Ff -- Ne --> G[Vytvoř rezervaci ve stavu DRAFT]
-    G --> H([Vrať ID rezervace a stav DRAFT])
+    Ff -- Ne --> G[Vytvoř rezervaci ve stavu PENDING_APPROVAL]
+    G --> H([Vrať ID rezervace a stav PENDING_APPROVAL])
     X1 --> E([Konec])
     H --> E
 ```
@@ -155,15 +149,37 @@ flowchart TD
     H --> E
 ```
 
+### OP-05 —  Approve Reservation
+
+```mermaid
+flowchart TD
+    A([Start: Tatér reaguje na rezervaci X]) --> B{Zvolil tatér schválení?}
+    
+    B -- Ne --> Rej[Nastav stav na REJECTED]
+    
+    B -- Ano --> C{Rezervace je PENDING_APPROVAL?}
+    C -- Ne --> X1[Zamítnuto — neplatný zdrojový stav]
+    C -- Ano --> D[Znovu zkontroluj kolize vůči\nCONFIRMED rezervacím — BR-02/BR-04]
+    
+    D --> E{Nalezena kolize?}
+    E -- Ano --> X2[Zamítnuto — rezervaci nelze potvrdit,\nnabídnuto zamítnutí]
+    E -- Ne --> F[Nastav stav CONFIRMED]
+    
+    F --> G([Vrať potvrzení úspěchu])
+    Rej --> G
+    X1 --> End([Konec])
+    X2 --> End
+    G --> End
+```
+
 ---
 
 ## Shrnutí kontroly konzistence
 
 | Kontrola | Výsledek |
 |---|---|
-| Create vs. Confirm | Create nealokuje Resource (jen kontroluje kolizi dopředu), závazná alokace vzniká až v Confirm — shodné s textem i diagramy. |
-| Availability vs. Confirm | Obě operace považují za blokující stejné stavy: CONFIRMED + pravidlo pauzy BR-04 (DRAFT neblokuje). |
-| Cancel vs. stavový diagram | Text i diagram shodně umožňují cancel z DRAFT i CONFIRMED, jen před `start`. |
-| Význam intervalů | Všude `[start, end)` dle BR-01, ověřovací příklady v `reservation-check-availability.md` s tím počítají. |
-| Diagram případů užití vs. text | Každý cíl aktéra (UC1–UC4) má odpovídající OP-01–OP-04 v textu; žádný „osiřelý" cíl. |
-| Požadavek vs. návrhové rozhodnutí | Diagramy neobsahují technologie ani interní komponenty (žádné DB, třídy) — pouze chování. |
+| Create vs. Approve | Create nealokuje Resource, závazná alokace vzniká až po kladném schválení v Approve — shodné s textem i diagramy. |
+| Availability vs. Approve | PENDING_APPROVAL neblokuje dostupnost, blokuje ji až CONFIRMED. |
+| Cancel vs. stavový diagram | Text i diagram shodně umožňují cancel z PENDING_APPROVAL i CONFIRMED před `start`. |
+| Význam intervalů | Všude `[start, end)` dle BR-01. |
+| Diagram případů užití vs. text | Nová operace OP-05 (Approve) je korektně zastoupena jako cíl tatéra, původní Confirm byl z Use Case diagramu odstraněn. |

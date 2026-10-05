@@ -1,10 +1,5 @@
 """
-Business logika rezervačního systému.
-
-Obsahuje kontrolu dvou pravidel:
-1. Common rule: dvě CONFIRMED rezervace stejného resource se nesmí překrývat.
-2. Domain-specific rule: mezi dvěma CONFIRMED rezervacemi stejného resource
-   musí být minimální 30minutová pauza (čas na úklid/přípravu).
+Business logika rezervačního systému (Baseline v0.2).
 """
 
 from datetime import datetime, timedelta
@@ -68,7 +63,7 @@ def create_reservation(
     end_time: datetime,
 ) -> Reservation:
     """
-    Vytvoří novou rezervaci ve stavu DRAFT.
+    Vytvoří novou rezervaci ve stavu PENDING_APPROVAL.
 
     Kontrola business pravidel (overlap, pauza, pracovní doba) probíhá vůči
     existujícím CONFIRMED rezervacím stejného resource.
@@ -106,7 +101,7 @@ def create_reservation(
         client_name=client_name,
         start_time=start_time,
         end_time=end_time,
-        status=ReservationStatus.DRAFT,
+        status=ReservationStatus.PENDING_APPROVAL,
     )
     db.add(reservation)
     db.commit()
@@ -114,42 +109,57 @@ def create_reservation(
     return reservation
 
 
-def confirm_reservation(db: Session, reservation_id: int) -> Reservation:
+def approve_reservation(db: Session, reservation_id: int, is_approved: bool) -> Reservation:
     """
-    Potvrdí rezervaci (DRAFT -> CONFIRMED).
-
-    Znovu kontroluje pravidla, protože mezi vytvořením DRAFT rezervace
-    a jejím potvrzením mohla vzniknout jiná CONFIRMED rezervace.
+    OP-05: Tatér schválí (CONFIRMED) nebo zamítne (REJECTED) rezervaci.
     """
     reservation = db.query(Reservation).get(reservation_id)
     if reservation is None:
         raise ValueError(f"Rezervace id={reservation_id} neexistuje.")
 
-    other_confirmed = (
-        db.query(Reservation)
-        .filter(
-            Reservation.resource_id == reservation.resource_id,
-            Reservation.status == ReservationStatus.CONFIRMED,
-            Reservation.id != reservation.id,
-        )
-        .all()
-    )
+    if reservation.status != ReservationStatus.PENDING_APPROVAL:
+        raise ValueError(f"Nelze schvalovat rezervaci ve stavu {reservation.status.value}.")
+
+    if not is_approved:
+        reservation.status = ReservationStatus.REJECTED
+        db.commit()
+        db.refresh(reservation)
+        return reservation
+
+    # Pokud schvaluje, musíme znovu zkontrolovat kolize s CONFIRMED (REQ-08)
+    other_confirmed = db.query(Reservation).filter(
+        Reservation.resource_id == reservation.resource_id,
+        Reservation.status == ReservationStatus.CONFIRMED,
+        Reservation.id != reservation.id,
+    ).all()
 
     for other in other_confirmed:
         if _overlaps(reservation.start_time, reservation.end_time, other.start_time, other.end_time):
-            raise ReservationConflictError(
-                f"Rezervaci nelze potvrdit, překrývá se s id={other.id}."
-            )
+            raise ReservationConflictError("Rezervaci nelze schválit, čas už je obsazen.")
         if _too_close(reservation.start_time, reservation.end_time, other.start_time, other.end_time, MIN_PAUSE_MINUTES):
-            raise ReservationConflictError(
-                f"Rezervaci nelze potvrdit, chybí {MIN_PAUSE_MINUTES}min pauza vůči id={other.id}."
-            )
+            raise ReservationConflictError("Rezervaci nelze schválit, chybí pauza.")
 
     reservation.status = ReservationStatus.CONFIRMED
     db.commit()
     db.refresh(reservation)
     return reservation
 
+def expire_old_reservations(db: Session, current_time: datetime) -> int:
+    """
+    REQ-07: Změní PENDING_APPROVAL starší než 24h na EXPIRED.
+    Vrací počet expirovaných žádostí.
+    """
+    threshold = current_time - timedelta(hours=24)
+    expired_count = 0
+    
+    pending = db.query(Reservation).filter(Reservation.status == ReservationStatus.PENDING_APPROVAL).all()
+    for res in pending:
+        if res.created_at <= threshold:
+            res.status = ReservationStatus.EXPIRED
+            expired_count += 1
+            
+    db.commit()
+    return expired_count
 
 def cancel_reservation(db: Session, reservation_id: int, current_time: datetime) -> Reservation:
     """

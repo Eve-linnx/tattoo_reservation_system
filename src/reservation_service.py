@@ -2,7 +2,7 @@
 Business logika rezervačního systému (Baseline v0.2).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -70,6 +70,9 @@ def create_reservation(
     """
     if end_time <= start_time:
         raise ValueError("Konec rezervace musí být po jejím začátku.")
+
+    if start_time < datetime.now():
+        raise ValueError("Nelze vytvořit rezervaci v minulosti.")
 
     resource = db.query(Resource).get(resource_id)
     if resource is None:

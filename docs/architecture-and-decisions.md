@@ -71,16 +71,17 @@ Sledujeme operaci **Approve Reservation (OP-05)**, konkrétně schvalovací vět
 
 ### A2. Jak hlavní průchod scénáře vypadá v kódu
 
-Celý scénář se odehrává v jediné funkci `approve_reservation()` v `src/reservation_service.py`. Žádná API/controller vrstva v projektu zatím neexistuje — v aktuální implementaci se funkce volá přímo z kódu, konkrétně z demo skriptu `src/test_spike.py` (řádek 55: `approve_reservation(db, r1.id, is_approved=True)`).
+Scénář má v aktuální implementaci API vstup a servisní část. Běžící FastAPI aplikace přijme HTTP požadavek v `api_approve_reservation()` v `src/main.py` a ta zavolá `approve_reservation()` v `src/reservation_service.py`. Demo skript `src/test_spike.py` volá servisní funkci přímo, bez HTTP vrstvy.
 
 Jednotlivé kroky scénáře probíhají takto:
 
-1. **Přijetí požadavku na schválení** — zavolá se `approve_reservation(db, reservation_id, is_approved=True)` (`reservation_service.py:112`).
-2. **Načtení rezervace** — `db.query(Reservation).get(reservation_id)` (řádek 116).
-3. **Ověření, že přechod je povolený** — funkce zkontroluje, že rezervace existuje a je ve stavu `PENDING_APPROVAL`; jinak vyhodí `ValueError` (řádky 117–121).
-4. **Vyhodnocení konfliktu (BR-02/BR-04)** — najdou se všechny `CONFIRMED` rezervace stejného tatéra a porovnají se pomocí `_overlaps()` a `_too_close()` (řádky 130–140).
-5. **Změna stavu** — pokud žádný konflikt nenastal, `reservation.status` se přepíše na `CONFIRMED` (řádek 142).
-6. **Uložení výsledku** — `db.commit()` a `db.refresh(reservation)` (řádky 143–144).
+1. **Přijetí požadavku na schválení** — HTTP `POST /reservations/{res_id}/approve` zpracuje `api_approve_reservation()` v `src/main.py`; tělo požadavku obsahuje `is_approved`.
+2. **Předání do aplikační logiky** — controller zavolá `approve_reservation(db, res_id, data.is_approved)` v `src/reservation_service.py`.
+3. **Načtení rezervace** — `db.query(Reservation).get(reservation_id)`.
+4. **Ověření, že přechod je povolený** — funkce zkontroluje, že rezervace existuje a je ve stavu `PENDING_APPROVAL`; jinak vyhodí `ValueError`.
+5. **Vyhodnocení konfliktu (BR-02/BR-04)** — najdou se všechny `CONFIRMED` rezervace stejného tatéra a porovnají se pomocí `_overlaps()` a `_too_close()`.
+6. **Změna stavu** — pokud žádný konflikt nenastal, `reservation.status` se přepíše na `CONFIRMED`.
+7. **Uložení a odpověď** — `db.commit()` a `db.refresh(reservation)` uloží výsledek; controller vrátí JSON s `id` a `status`. `ReservationConflictError` nebo `ValueError` controller převede na HTTP 400.
 
 ### A3. Jedna důležitá chybová větev: konflikt při schvalování
 
@@ -89,29 +90,31 @@ Co se stane, když tatér chce schválit žádost, ale mezitím už potvrdil jin
 - **Co k tomu říká v0.2:** při kolizi se schválení zamítne (OP-05, alternativní výsledky).
 - **Kde se to pozná:** přímo v `approve_reservation()` — dotaz na existující `CONFIRMED` rezervace a test `_overlaps()`/`_too_close()` (řádky 130–140).
 - **Kde se rozhodne výsledek:** na stejném místě — jakmile se najde konflikt, hned se vyhodí `raise ReservationConflictError(...)`, ještě před jakýmkoliv zápisem do databáze.
-- **Co dostane volající:** Python výjimku `ReservationConflictError`. Rezervace samotná zůstane ve stavu `PENDING_APPROVAL`, protože k `db.commit()` se vůbec nedostane.
+- **Co dostane volající:** při přímém volání service funkce Python výjimku `ReservationConflictError`; přes HTTP endpoint ji `api_approve_reservation()` převede na HTTP 400 s textem chyby. Rezervace samotná zůstane ve stavu `PENDING_APPROVAL`, protože k `db.commit()` se vůbec nedostane.
 
 **Rozdíl mezi specifikací a implementací, který jsme při tom objevili:**
 Specifikace (`docs/spec/reservation-approve.md`, řádek 39) píše, že při kolizi "rezervace **může být tatérem rovnou zamítnuta**" — tedy že po neúspěšném schválení by mohlo/mělo logicky následovat zamítnutí (přechod do `REJECTED`). Kód to ale takhle nedělá: po vyhození výjimky se nic automaticky nezmění, rezervace zůstává viset v `PENDING_APPROVAL`. Aby se dostala do `REJECTED`, musí někdo zavolat `approve_reservation()` znovu, tentokrát s `is_approved=False` (řádky 123–127). Automatická návaznost mezi "konflikt" a "zamítnuto" v kódu chybí.
 
 ### A4. Hlavní části implementace, které scénář realizují
 
-Scénář prochází čtyřmi částmi kódu (žádná API vrstva zatím neexistuje, takže jich je méně než v typickém webovém projektu):
+Scénář prochází pěti částmi kódu:
 
-- **Approve Entry Point** — v tuto chvíli jen přímé volání funkce z `test_spike.py: main()` (řádky 49–56). Spouští schválení/zamítnutí.
-- **Reservation Service** — modul `reservation_service.py`, funkce `approve_reservation`, `_overlaps`, `_too_close` (řádky 25–45, 112–145). Ověří přechod, zkontroluje konflikt a rozhodne o výsledku.
-- **Reservation Domain Model** — třídy `Reservation` a `ReservationStatus` v `models.py` (řádky 25–31, 46–58). Nesou stav a data rezervace, které se v tomto scénáři mění.
-- **Persistence (SQLAlchemy Session)** — objekt `db: Session`, který service používá přímo (`db.query`, `db.commit`, `db.refresh`, řádky 116, 130–134, 143–144). Žádná samostatná repository třída v projektu není.
+- **Reservation API / Controller** — `api_approve_reservation()` v `src/main.py`. Přijme HTTP command, získá databázovou session přes `Depends(get_db)`, zavolá service a vytvoří HTTP/JSON odpověď.
+- **Reservation Service** — modul `src/reservation_service.py`, funkce `approve_reservation`, `_overlaps`, `_too_close`. Ověří přechod, zkontroluje konflikt a rozhodne o výsledku.
+- **Reservation Domain Model** — třídy `Reservation` a `ReservationStatus` v `src/models.py`. Nesou stav a data rezervace, které se v tomto scénáři mění.
+- **Persistence** — `sqlalchemy.orm.Session`, který service používá přímo (`db.query`, `db.commit`, `db.refresh`). Samostatná repository třída v projektu není.
+- **Direct Demo Entry Point** — `main()` v `src/test_spike.py` umožňuje stejnou service funkci ověřit přímo, bez API. Není součástí běžného HTTP průchodu.
 
 ### A5. Kde je stav, kde se mění a kde se vynucuje pravidlo
 
-**Stav rezervace** je trvale uložen ve sloupci `status` (typ `Enum(ReservationStatus)`) v tabulce `reservations` v SQLite databázi (`models.py:55`, `test_spike.py:21`). O přechod `PENDING_APPROVAL → CONFIRMED` se stará jen jedna funkce — `approve_reservation()` v `reservation_service.py` (řádky 130–144), která zároveň rozhoduje (kontroluje konflikt) i provádí zápis.
+**Stav rezervace** je trvale uložen ve sloupci `status` (typ `Enum(ReservationStatus)`) v tabulce `reservations` v SQLite databázi. Běžící API používá `tattoo_studio.db` (engine v `main.py`), zatímco demo používá `spike_test.db` (engine v `test_spike.py`). O přechod `PENDING_APPROVAL → CONFIRMED` se stará jen jedna funkce — `approve_reservation()` v `reservation_service.py`, která zároveň rozhoduje (kontroluje konflikt) i provádí zápis.
 
 **Pravidlo BR-02** (dvě `CONFIRMED` rezervace stejného tatéra se nesmí překrývat) se v tomto scénáři zjišťuje a vyhodnocuje na stejném místě — v `approve_reservation()`, řádky 130–138. Důležité zjištění: **stejná kontrola konfliktu je v kódu duplikovaná na třech místech** — kromě `approve_reservation()` ještě v `create_reservation()` (řádky 88–92) a v `check_availability()` (řádky 195–197, tam jen informativně, bez zápisu). Výsledná změna stavu (zápis `CONFIRMED`) se ale provádí jen v `approve_reservation()`, řádek 142.
 
 ### A6. Jaké závislosti scénář skutečně používá
 
-- **Databáze (SQLite):** service dostává `db: Session` jako parametr a pracuje s ním přímo (`db.query/.commit/.refresh`); mapování na tabulky definuje `models.py`. Žádná vlastní vrstva repository mezi service a SQLAlchemy není.
+- **Databáze (SQLite):** v běžící FastAPI aplikaci `src/main.py` vytváří engine nad `sqlite:///./tattoo_studio.db`; service dostává `db: Session` jako parametr a pracuje s ním přímo (`db.query/.commit/.refresh`). Mapování na tabulky definuje `src/models.py`. Žádná vlastní repository vrstva mezi service a SQLAlchemy není.
+- **Demo databáze (SQLite):** `src/test_spike.py` používá oddělené `sqlite:///spike_test.db` pro demonstrační běh a ověřuje service funkci přímým voláním. Nejde o databázi používanou běžícím FastAPI endpointem.
 - **Notification Service:** v kódu tohoto scénáře se **nikde nevolá** — je to jen plánovaný budoucí driver zmíněný výše v tomto dokumentu, reálně zatím neimplementovaný.
 - **IdP / autentizace:** také **se nepoužívá** — `approve_reservation()` nijak nekontroluje, kdo volání dělá; kdokoliv se znalostí `reservation_id` může schválení/zamítnutí provést.
 
@@ -120,30 +123,30 @@ Scénář prochází čtyřmi částmi kódu (žádná API vrstva zatím neexist
 ```
 +---------------------------- Application code -----------------------------+
 |                                                                            |
-|  [Approve Entry Point]                           (module / script)       |
-|  role: spouští approve/reject; žádná HTTP/API vrstva neexistuje          |
-|          | approve_reservation(id, is_approved)                         |
-|          v                                                                |
-|  [Reservation Service]                            (module)               |
-|  role: ověří přechod, zkontroluje konflikt (BR-02/BR-04), rozhodne       |
-|          | load/save Reservation (via Session)                          |
-|          v                                                                |
-|  [Reservation Domain Model]                        (class)               |
-|  role: nese stav (ReservationStatus) a data rezervace                   |
-|          |                                                                |
-|          v                                                                |
-|  [Persistence: SQLAlchemy Session]                 (framework object)    |
-|  role: provádí SQL dotazy, commit, refresh                               |
+|  [Reservation API / Controller]                   (function)              |
+|  role: přijme HTTP approve command a vrátí JSON/HTTP výsledek              |
+|          | approve_reservation(id, is_approved)                           |
+|          v                                                                 |
+|  [Reservation Service]                            (module)                |
+|  role: ověří přechod, zkontroluje BR-02/BR-04 a rozhodne                   |
+|          | load/save Reservation                                         |
+|          v                                                                 |
+|  [Reservation Domain Model]                      (classes)                |
+|  role: nese stav ReservationStatus a data rezervace                       |
+|          | SQLAlchemy mapping                                             |
+|          v                                                                 |
+|  [Persistence: SQLAlchemy Session]               (framework object)       |
+|  role: provádí SELECT, UPDATE, commit a refresh                           |
 |                                                                            |
 +----------------------------------------------------------------------------+
         | SQL read/write (SELECT / UPDATE)
         v
- [SQLite DB: spike_test.db]                          (database)
+ [SQLite DB: tattoo_studio.db]                         (database)
 ```
 
 ```
-Approve Entry Point:
-- test_spike.py: main()
+Reservation API / Controller:
+- main.py: api_approve_reservation
 
 Reservation Service:
 - reservation_service.approve_reservation
@@ -155,8 +158,11 @@ Reservation Domain Model:
 - models.ReservationStatus
 
 Persistence:
+- main.py: get_db, SessionLocal, engine
 - sqlalchemy.orm.Session (db)
-- sqlalchemy.create_engine (test_spike.py setup)
+
+Direct Demo Entry Point:
+- test_spike.py: main() (pouze ověřovací/demo průchod)
 ```
 
 ### A8. Otázka pro další C03

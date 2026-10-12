@@ -172,3 +172,158 @@ Direct Demo Entry Point:
 **Doklad:** V `approve_reservation()` jsou kontrola kolize (dotaz na `CONFIRMED` rezervace, řádky 130–134) a zápis nového stavu (`commit`, řádky 142–144) dva oddělené kroky. Mezi nimi není žádný zámek, transakční izolace typu "SELECT ... FOR UPDATE" ani verzovací sloupec, které by druhému souběžnému volání zabránily proklouznout mezitím.
 
 **Proč je důležitá:** BR-02 musí platit i při souběžném schvalování dvou kolidujících žádostí na stejný čas. Samotná specifikace pravidel (`docs/spec/reservation-rules.md`, řádky 24–25) tuto situaci přímo zmiňuje — "při souběžném potvrzování kolidujících návrhů může uspět nejvýše jeden pokus" — ale implementace žádný mechanismus, který by to zaručil, zatím neobsahuje.
+
+---
+
+## C03 — Část B–M: TO-BE Architektura a Rozhodnutí
+
+### B. Architektonické drivery
+
+| Podklad / zdroj | Proč ovlivňuje architekturu | Otázka, kterou musí architektura vyřešit |
+| :--- | :--- | :--- |
+| BR-02, REQ-04, Part A (souběh) | Dva souběžné requesty mohou oba vidět „bez konfliktu“ před zápisem. | Kde a jak se musí udělat autoritativní lock/decision, aby BR-02 zůstalo pravdivé? |
+| REQ-07 (Vypršení času) | Stav PENDING_APPROVAL musí přejít po 24h do EXPIRED bez akce uživatele. | Kdo vlastní expiraci a jaký mechanismus provede pozdější transition? |
+| Notification Boundary | Notifikace může selhat (síťový výpadek). | Má failure notifikace změnit výsledek schválení (rollback) a kdo řeší retry? |
+
+### C1. Doménový třídní model
+
+```mermaid
+classDiagram
+    class Resource {
+        +Int id
+        +String name
+    }
+    class Reservation {
+        +Int id
+        +Int resource_id
+        +DateTime start_time
+        +DateTime end_time
+        +ReservationStatus status
+    }
+    class ReservationStatus {
+        <<enumeration>>
+        PENDING_APPROVAL
+        CONFIRMED
+        REJECTED
+        CANCELLED
+        EXPIRED
+    }
+    Resource "1" -- "*" Reservation : has
+```
+
+### C2. Odpovědnosti systému
+
+| Zdroj | Odpovědnost | Co musí rozhodovat / vlastnit | Potřebuje jednoho jasného vlastníka? | Důvod |
+| :--- | :--- | :--- | :--- | :--- |
+| Confirm + BR-02 | Vyhodnotit konflikt a schválit rezervaci | Lifecycle transition (CONFIRMED/REJECTED) a DB lock | ano | Různé procesy nesmí obejít kontrolu kolize |
+| API | Zpracovat HTTP vstup | Formát HTTP odpovědi (REST) | ano | Oddělení webové vrstvy od byznys logiky |
+| REQ-07 | Kontrola expirace (Background Job) | EXPIRED state transition | ano | Časovač musí fungovat nezávisle na HTTP requestech |
+| Notifikace | Doručit notifikaci tatérovi/klientovi | Odeslání do externí API | ano | Externí failure nesmí rozbít zápis rezervace do DB |
+
+### D. Rozhodovací otázka
+**Kde a jak má být provedeno `confirmation decision` tak, aby při souběhu dvou schválení na stejný čas platilo BR-02 (Exclusive Resource)?**
+
+### E1. Alternativy
+
+**Alternativa A — Application-level Locking (Mutex / In-memory lock)**
+Zámek se bude řešit v paměti Python aplikace (např. přes `asyncio.Lock`). 
+
+**Alternativa B — Database-level Pessimistic Locking (SELECT ... FOR UPDATE)**
+Kontrola kolizí a zápis stavu bude chráněn transakčním zámkem přímo v databázi, takže DB nepustí dvě souběžné transakce měnit rezervace stejného tatéra přes sebe.
+
+### E2. Porovnání alternativ vůči driverům
+
+| Driver / kritérium | Alternativa A (App-level lock) | Alternativa B (DB-level lock) |
+| :--- | :--- | :--- |
+| Konzistence při souběhu (BR-02) | Bude fungovat jen dokud běží 1 instance API. Pokud nasadíme 2 instance, nezabrání to kolizi. | 100% konzistence zaručená databází nezávisle na počtu API instancí. |
+| Provozní složitost | Velmi jednoduché na kód, nezatěžuje DB, ale špatně škáluje. | Vyžaduje specifický SQL příkaz (v SQLAlchemy `with_for_update()`), mírně delší zámek na tabulce. |
+
+### F. ADR
+
+## ADR-01 — Konkurenční přístup ke schvalování (Concurrency & Locking)
+
+- **Kontext:** V Part A jsme zjistili, že `approve_reservation` nemá ochranu proti race-condition. Dva tatéři (nebo chybný UI retries) mohou schválit dvě kolidující žádosti přesně ve stejnou milisekundu.
+- **Drivery:** BR-02 (Exclusive Resource), Data consistency.
+- **Alternativa A:** Application-level lock.
+- **Alternativa B:** Database-level lock (Pessimistic Locking `FOR UPDATE`).
+- **Rozhodnutí:** Volíme **Alternativu B**.
+- **Důvod:** Databáze je u rezervačních systémů jediný skutečný zdroj pravdy (SSOT). Uzamčení řádků pomocí transakce zaručí BR-02 i při horizontálním škálování aplikace.
+- **Přijaté negativní důsledky:** Mírně horší propustnost při masivním paralelním schvalování (transakce musí čekat ve frontě databáze), což pro tetovací studio není úzké hrdlo.
+- **Rozhodnutí znovu otevřeme, když:** Databáze se stane kritickým bottleneckem a budeme muset přejít na asynchronní event-sourcing / optimistické zamykání.
+
+### G. TO-BE Architektura
+
+**G1. Context Diagram**
+```mermaid
+flowchart LR
+    Client(["Klient / Tatér"]) -- HTTP API --> System["Reservation System"]
+    System -- SQL --> DB[("Database")]
+    System -.-> Notif["Notification Service\n(External)"]
+```
+
+**G2. Static Architecture**
+```mermaid
+flowchart TD
+    API["[Reservation API]\nrole: HTTP Controller"]
+    Service["[Reservation Service]\nrole: Byznys logika, lifecycle, locking\nowns: Reservation State"]
+    Background["[Expiration Job]\nrole: Uplynutí času 24h"]
+    DB[("[Persistence]\nSQLite / SQLAlchemy")]
+
+    API --> Service
+    Background --> Service
+    Service --> DB
+```
+
+**G3. Statechart Ownership**
+| Přechod | Owner rozhodnutí | Kdo může transition pouze vyžádat |
+| :--- | :--- | :--- |
+| DRAFT → PENDING_APPROVAL | Reservation Service | Klient (API) |
+| PENDING_APPROVAL → CONFIRMED | Reservation Service (s DB lockem) | Tatér (API) |
+| PENDING_APPROVAL → EXPIRED | Reservation Service | Expiration Job |
+
+**G4. Runtime / Deployment**
+Aplikace poběží v jednom uvicorn worker procesu, napojená na SQLite databázový soubor. Background proces (případně asynchronní task ve FastAPI) běží ve stejné memory-space.
+
+### H. Návrhový model
+
+**H1. Design Sequence Diagram (OP-05 Approve - TO BE)**
+```mermaid
+sequenceDiagram
+    actor Tater
+    participant API as Reservation API
+    participant SVC as Reservation Service
+    participant DB as Persistence (SQLAlchemy)
+
+    Tater->>API: POST /reservations/{id}/approve
+    API->>SVC: approve_reservation(db, id, True)
+    SVC->>DB: query.with_for_update().get(id)
+    Note over SVC,DB: DB lock zabrání<br/>souběžnému zápisu
+    DB-->>SVC: Reservation (PENDING)
+    SVC->>DB: fetch existing CONFIRMED
+    DB-->>SVC: list of confirmed
+    SVC->>SVC: check BR-02 (overlaps)
+    alt Conflict exists
+        SVC-->>API: raises ReservationConflictError
+        API-->>Tater: 400 Bad Request
+    else No conflict
+        SVC->>DB: set status = CONFIRMED, commit()
+        DB-->>SVC: success
+        SVC-->>API: reservation record
+        API-->>Tater: 200 OK
+    end
+```
+
+### J. AS-IS → TO-BE Delta
+
+| Oblast | AS-IS | TO-BE | Akce |
+| :--- | :--- | :--- | :--- |
+| Locking (BR-02) | Chybí ochrana | `with_for_update()` v service | **CHANGE** |
+| Notifikace | Žádné | Modul připraven | KEEP (mimo scope C03) |
+| Expirace (REQ-07) | Pouze manuální skript | Oddělený worker proces | VERIFY |
+
+### M. Evidence C03
+
+- **AS-IS → TO-BE delta:** Rozhodnuto o zavedení pesimistického zamykání v databázi pro zaručení pravidla BR-02 při souběžném schvalování.
+- **Implementation changes:** V rámci následujícího vývoje bude přidáno zamykání do `reservation_service.py` (`db.query(Reservation).with_for_update()`).
+- **Behaviour verification:** Otestováno na manuálních HTTP požadavcích. C02 baseline chování nadále funguje beze změny.
+- **Remaining uncertainty / risk:** Notifikace stále fungují jen jako placeholder, reálná integrace přinese nové drivery.

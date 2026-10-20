@@ -37,6 +37,15 @@ Přejděte do složky frontend, nainstalujte balíčky a spusťte vývojový ser
 
 Aplikace poběží typicky na http://localhost:5173 (přesný port vypíše konzole).
 
+### 3. Spuštění automatizovaných testů (C03 & C05)
+Aplikace obsahuje sadu unit a architektonických testů napsaných v knihovně `pytest`. Tyto testy ověřují dodržení návrhového vzoru, validaci byznys pravidel a přechody stavů.
+
+Pro spuštění testů zadejte ve složce `src`:
+```bash
+pip install -r requirements.txt
+pytest -v test_reservation_service.py
+
+
 ### Testování / Spike test
 Pro spuštění demonstračního skriptu (ověření persistence), použijte:
 

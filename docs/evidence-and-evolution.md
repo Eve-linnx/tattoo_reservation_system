@@ -55,3 +55,41 @@ Tento blok mapuje, jakým způsobem jsou požadavky a doménová pravidla ze spe
 * **Změna stavů (models.py):** Stav `DRAFT` byl nahrazen za `PENDING_APPROVAL`. Byly přidány nové koncové stavy `REJECTED` (pro zamítnutí) a `EXPIRED` (vypršení).
 * **Úprava byznys logiky (reservation_service.py):** Zanikla metoda `confirm_reservation`. Vznikla nová metoda `approve_reservation`, kterou ovládá tatér (parametr `is_approved`).
 * **Nový architektonický driver (Časovač):** Pro splnění požadavku REQ-07 byla naprogramována metoda `expire_old_reservations`. Do budoucna (C03) se počítá s jejím automatizovaným spouštěním na pozadí.
+
+## C03 — Architecture Evidence
+**Architektonické pravidlo:** Doménová vrstva (`reservation_service.py`) nesmí nijak záviset na HTTP/Webovém frameworku (`FastAPI`).[cite: 5]
+**Kontrola:** Napsán automatizovaný test `test_architecture_service_does_not_depend_on_web_layer`, který parsuje AST strom souboru `reservation_service.py` a kontroluje, že se v něm nevyskytuje žádný import z FastAPI.[cite: 5]
+**Výsledek:** Test PASSED. Implementace splňuje návrh.[cite: 5]
+
+## C05 DD Verification Evidence
+
+**Tests derived from DD:**
+| DD element / decision | What must hold? | Test level | Test case |
+|---|---|---|---|
+| failure behavior | Rezervace mimo pracovní dobu (9-18) je zamítnuta. | unit | `test_create_outside_working_hours_throws_error` |
+| failure behavior | Překryv s CONFIRMED rezervací vyhodí konflikt. | unit | `test_create_overlapping_confirmed_reservation_throws_error` |
+| state transition | Úspěšné schválení změní stav na CONFIRMED. | unit | `test_approve_reservation_changes_state_to_confirmed` |
+| state transition | Neodbavené žádosti starší 24h přejdou do EXPIRED. | unit | `test_expire_old_reservations_changes_status_to_expired` |
+| failure behavior | Nelze zrušit (CANCEL) rezervaci, jejíž start_time již nastal. | unit | `test_cancel_after_start_time_throws_error` |
+
+*Selected level logic:*
+Zvolili jsme Unit testy na úrovni Service vrstvy s in-memory SQLite databází. Ověřujeme tím design rozhodnutí vložit veškerou byznys a stavovou logiku do `reservation_service.py` tak, aby byla plně odizolovaná od HTTP vrstvy.
+
+**Unit/component tests executed:**
+Ano, 5 testů spuštěno přes `pytest` (vše PASSED).
+
+**Design ↔ implementation mismatch:**
+| DD decision | Implemented? | Evidence | Action |
+|---|---|---|---|
+| 30min hygienická pauza | YES | `reservation_service.py:_too_close` | keep |
+| Pracovní doba 9:00 - 18:00 | YES | `reservation_service.py:_check_working_hours` | keep |
+| Zákaz storna po startu | YES | `test_cancel_after_start_time_throws_error` | keep |
+
+**Resolution:**
+Nebyly nalezeny žádné neshody mezi návrhovým záměrem a skutečnou implementací. Kód věrně reflektuje popsaný design.
+
+**Remaining design risk:**
+Kód currently neřeší notifikace klientovi (např. e-mail po změně stavu na CONFIRMED), což bude vyžadovat budoucí implementaci Observer patternu nebo event fronty, aby to neblokovalo hlavní HTTP thread.
+
+**Commit/tag:**
+v1.0-C05

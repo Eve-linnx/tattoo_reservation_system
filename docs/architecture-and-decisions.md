@@ -175,7 +175,7 @@ Direct Demo Entry Point:
 
 ---
 
-## C03 — Část B–M: TO-BE Architektura a Rozhodnutí
+## C04 — Část B–M: TO-BE Architektura a Rozhodnutí
 
 ### B. Architektonické drivery
 
@@ -327,3 +327,85 @@ sequenceDiagram
 - **Implementation changes:** V rámci následujícího vývoje bude přidáno zamykání do `reservation_service.py` (`db.query(Reservation).with_for_update()`).
 - **Behaviour verification:** Otestováno na manuálních HTTP požadavcích. C02 baseline chování nadále funguje beze změny.
 - **Remaining uncertainty / risk:** Notifikace stále fungují jen jako placeholder, reálná integrace přinese nové drivery.
+
+
+## C05 Detailed Design
+
+**Selected architecture unit:** Reservation Logic (`reservation_service.py`)
+**Related scenario(s):** Create Reservation (OP-01), Confirm Reservation (OP-03), Cancel Reservation (OP-04), Expire Reservation (REQ-07)
+**Relevant business rule(s):** BR-01 (Interval semantics), BR-02 (Exclusive Resource invariant), BR-03 (Cancellation policy)
+
+**Detailed responsibilities:**
+| Detailed responsibility | Why is it needed? |
+|---|---|
+| Validate time constraints | Rezervace nesmí být v minulosti a musí respektovat pracovní dobu tatéra. |
+| Check resource availability | Zamezení konfliktů (překryvů a dodržení 30minutové pauzy) mezi potvrzenými rezervacemi stejného tatéra. |
+| Manage reservation lifecycle | Bezpečný přechod stavů (PENDING_APPROVAL -> CONFIRMED / REJECTED / CANCELLED / EXPIRED). |
+
+**Design elements and ownership:**
+| Responsibility | Owner | State/data | Why here? |
+|---|---|---|---|
+| Business rules & Validation | `reservation_service` (Module) | N/A (Stateless) | Centrální místo pro veškerou doménovou logiku izolované od HTTP a DB vrstvy. |
+| Reservation State | `Reservation` (Entity) | `ReservationStatus` | Datový model vlastněný databází (SQLAlchemy), uchovává stav rezervace. |
+| Resource State | `Resource` (Entity) | Pracovní doba | Definuje hranice dostupnosti pro daného tatéra. |
+
+**Key interface(s) / contract(s):**
+`create_reservation(db: Session, resource_id: int, client_name: str, start_time: datetime, end_time: datetime) -> Reservation`
+*   **Preconditions:** `start_time` < `end_time`, `start_time` je v budoucnosti, existuje `Resource`.
+*   **Postcondition:** Vytvořena rezervace ve stavu `PENDING_APPROVAL`.
+*   **Failures:** `ValueError` (neexistující resource, špatný čas), `OutsideWorkingHoursError` (mimo pracovní dobu), `ReservationConflictError` (kolize s jinou `CONFIRMED` rezervací).
+
+**Focused structural view:**
+```mermaid
+classDiagram
+    class ReservationController {
+        +api_create_reservation()
+        +api_approve_reservation()
+    }
+    class ReservationService {
+        +create_reservation()
+        +approve_reservation()
+        +check_availability()
+        -_overlaps()
+        -_too_close()
+    }
+    class Reservation {
+        +int id
+        +datetime start_time
+        +datetime end_time
+        +ReservationStatus status
+    }
+    class Resource {
+        +time work_start
+        +time work_end
+    }
+    ReservationController --> ReservationService : calls
+    ReservationService --> Reservation : manages state
+    ReservationService --> Resource : reads rules
+```
+
+**Detailed sequence:**
+*Create Reservation Sequence:*
+`FastAPI Route` -> `ReservationService.create_reservation()`
+-> `_check_working_hours(Resource)`
+-> DB query for `CONFIRMED` reservations
+-> `_overlaps()` / `_too_close()` validations
+-> DB save -> returns `Reservation`
+
+**Important methods / operations:**
+*   **Operation:** `approve_reservation`
+*   **Responsibility:** Tatér schvaluje nebo zamítá čekající rezervaci.
+*   **Failure behavior:** Vyhodí `ValueError`, pokud rezervace není ve stavu `PENDING_APPROVAL`. Vyhodí `ReservationConflictError`, pokud v mezičase vznikla kolizní `CONFIRMED` rezervace.
+
+**Algorithm / decision logic:**
+*Conflict Detection Logic:*
+```python
+for existing in confirmed_reservations:
+    if start_a < end_b and start_b < end_a: 
+        raise Conflict # Přímý překryv
+    if gap_after_a < 30_mins or gap_after_b < 30_mins:
+        raise Conflict # Porušení hygienické pauzy
+```
+
+**DD decisions intentionally left to code:**
+Helper metody `_overlaps` a `_too_close` jsou implementovány jako privátní funkce modulu, nevytváříme pro ně zbytečné Value Objects nebo samostatné kalkulátory. Databázové dotazy jsou realizovány přímo přes SQLAlchemy Session, nevytváříme abstraktní Repository pattern, protože aplikace je malá.

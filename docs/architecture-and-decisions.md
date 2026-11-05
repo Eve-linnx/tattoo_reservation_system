@@ -196,12 +196,16 @@ classDiagram
     class Resource {
         +Int id
         +String name
+        +Time work_start
+        +Time work_end
     }
     class Reservation {
         +Int id
         +Int resource_id
+        +String client_name
         +DateTime start_time
         +DateTime end_time
+        +DateTime created_at
         +ReservationStatus status
     }
     class ReservationStatus {

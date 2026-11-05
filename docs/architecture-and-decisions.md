@@ -301,11 +301,11 @@ flowchart TD
 **G3. Statechart Ownership**
 | Přechod | Owner rozhodnutí | Kdo může transition pouze vyžádat | Stav implementace |
 | :--- | :--- | :--- | :--- |
-| [*] → PENDING_APPROVAL (create) | Reservation Service (`create_reservation`) | Klient (API) | ✅ |
-| PENDING_APPROVAL → CONFIRMED | Reservation Service (`approve_reservation`, pod zámkem tatéra – ADR-01) | Tatér (API) | ✅ od `78c4c87` |
-| PENDING_APPROVAL → REJECTED | Reservation Service (`approve_reservation`, `is_approved=False`) | Tatér (API) | ✅ |
-| PENDING_APPROVAL / CONFIRMED → CANCELLED | Reservation Service (`cancel_reservation`, guard stavu + `now < start`) | Klient / Tatér (API) | ✅ od `78c4c87` (F2, F3) |
-| PENDING_APPROVAL → EXPIRED | Reservation Service (`expire_old_reservations`) | Expiration trigger | ⚠️ funkce existuje, trigger chybí (CR-01) |
+| [*] → PENDING_APPROVAL (create) | Reservation Service (`create_reservation`) | Klient (API) | ANO |
+| PENDING_APPROVAL → CONFIRMED | Reservation Service (`approve_reservation`, pod zámkem tatéra – ADR-01) | Tatér (API) | ANO od `78c4c87` |
+| PENDING_APPROVAL → REJECTED | Reservation Service (`approve_reservation`, `is_approved=False`) | Tatér (API) | ANO |
+| PENDING_APPROVAL / CONFIRMED → CANCELLED | Reservation Service (`cancel_reservation`, guard stavu + `now < start`) | Klient / Tatér (API) | ANO od `78c4c87` (F2, F3) |
+| PENDING_APPROVAL → EXPIRED | Reservation Service (`expire_old_reservations`) | Expiration trigger | ČÁSTEČNĚ – funkce existuje, trigger chybí (CR-01) |
 
 **G4. Runtime / Deployment**
 Aplikace běží v jednom uvicorn worker procesu, napojená na SQLite databázový soubor. FastAPI obsluhuje synchronní endpointy v threadpoolu, takže i jeden proces zpracovává requesty souběžně – proto je nutný zámek z ADR-01. Všechny časy (`start_time`, `end_time`, `created_at`, „now“ v API) jsou **lokální naivní čas serveru**; předpoklad: server i klienti v časové zóně Europe/Prague (rozhodnutí k C06 F3).

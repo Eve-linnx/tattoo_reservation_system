@@ -83,9 +83,9 @@ Ano, 5 testů spuštěno přes `pytest` (vše PASSED) na `v1.0-C05`. Po C06 dopl
 |---|---|---|---|
 | 30min hygienická pauza | YES | `reservation_service.py:_too_close` (pokryto jen kódem, test chybí – C06 D4) | keep, doplnit test |
 | Pracovní doba 9:00 - 18:00 | YES | `reservation_service.py:_check_working_hours` | keep |
-| Zákaz storna po startu | PARTLY na `v1.0-C05` → YES od `78c4c87` | service OK (`test_cancel_after_start_time_throws_error`), ale API předávalo `utcnow()` – C06 F3; po opravě `test_F3_*` | update code ✅ |
-| Bezpečný přechod stavů (lifecycle) | NO na `v1.0-C05` → YES od `78c4c87` | cancel přepisoval `REJECTED`/`EXPIRED` na `CANCELLED` – C06 F2; po opravě `test_F2_*` | update code ✅ |
-| Lock při schvalování (ADR-01) | NO na `v1.0-C05` → YES od `78c4c87` | zámek v kódu chyběl – C06 F1; po opravě `test_F1_*` | update code + update DD/ADR ✅ |
+| Zákaz storna po startu | PARTLY na `v1.0-C05` → YES od `78c4c87` | service OK (`test_cancel_after_start_time_throws_error`), ale API předávalo `utcnow()` – C06 F3; po opravě `test_F3_*` | update code (hotovo) |
+| Bezpečný přechod stavů (lifecycle) | NO na `v1.0-C05` → YES od `78c4c87` | cancel přepisoval `REJECTED`/`EXPIRED` na `CANCELLED` – C06 F2; po opravě `test_F2_*` | update code (hotovo) |
+| Lock při schvalování (ADR-01) | NO na `v1.0-C05` → YES od `78c4c87` | zámek v kódu chyběl – C06 F1; po opravě `test_F1_*` | update code + update DD/ADR (hotovo) |
 | Automatická expirace (REQ-07) | PARTLY | funkce existuje, nic ji nevolá | DEFER → C08 CR-01 |
 
 **Resolution:**

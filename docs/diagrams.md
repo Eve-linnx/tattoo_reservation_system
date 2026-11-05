@@ -46,12 +46,12 @@ Poznámky ke konzistenci:
 Stav implementace (k `78c4c87`) – diagram zobrazuje cílový rozsah v0.2, ne vše je v kódu:
 | Prvek diagramu | Implementováno? | Pozn. |
 |---|---|---|
-| Vytvořit rezervaci | ✅ | `POST /reservations` + formulář v UI |
-| Schválit / Zamítnout | ✅ | `POST /reservations/{id}/approve` + admin sekce UI |
-| Zrušit rezervaci | ⚠️ jen API | `POST /reservations/{id}/cancel`; UI nemá tlačítko pro zrušení |
-| Zjistit dostupnost | ⚠️ jen frontend | API endpoint neexistuje, sloty počítá UI – známá odchylka (`architecture-and-decisions.md` § N) |
-| Rozlišení aktérů Klient / Tatér | ❌ | backend role nerozlišuje; admin sekce UI je chráněna jen PINem natvrdo v `App.jsx` – známé omezení |
-| Notification Service | ❌ | plánovaná externí integrace, v kódu se nevolá |
+| Vytvořit rezervaci | ANO | `POST /reservations` + formulář v UI |
+| Schválit / Zamítnout | ANO | `POST /reservations/{id}/approve` + admin sekce UI |
+| Zrušit rezervaci | ČÁSTEČNĚ – jen API | `POST /reservations/{id}/cancel`; UI nemá tlačítko pro zrušení |
+| Zjistit dostupnost | ČÁSTEČNĚ – jen frontend | API endpoint neexistuje, sloty počítá UI – známá odchylka (`architecture-and-decisions.md` § N) |
+| Rozlišení aktérů Klient / Tatér | NE | backend role nerozlišuje; admin sekce UI je chráněna jen PINem natvrdo v `App.jsx` – známé omezení |
+| Notification Service | NE | plánovaná externí integrace, v kódu se nevolá |
 
 ---
 

@@ -1,5 +1,7 @@
 ## OP-03 — Potvrzení rezervace (Confirm)
 
+> **SUPERSEDED ve v0.2.** Samostatná operace Confirm zanikla a je nahrazena **OP-05 Approve** (`reservation-approve.md`): přechod do `CONFIRMED` nastává schválením tatérem ze stavu `PENDING_APPROVAL`. Požadavky **REQ-03 a REQ-04 dál platí** pro přechod `PENDING_APPROVAL → CONFIRMED` v OP-05 („DRAFT“ níže čtěte jako `PENDING_APPROVAL`). Soubor ponecháváme kvůli trasovatelnosti v0.1 → v0.2.
+
 **Cíl / hodnota pro uživatele:**
 Platný DRAFT návrh se stane závaznou alokací času tatéra.
 

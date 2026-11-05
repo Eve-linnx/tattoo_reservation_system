@@ -10,6 +10,7 @@ Autorizovaný Tatér (Resource) ručně schválí nebo zamítne rezervaci, pří
 REQ-06: Systém umožní tatérovi schválit (změna na CONFIRMED) nebo zamítnout (změna na REJECTED) existující rezervaci ve stavu PENDING_APPROVAL.
 REQ-07: Pokud rezervace zůstane ve stavu PENDING_APPROVAL déle než 24 hodin, systém ji automaticky označí jako EXPIRED.
 REQ-08: Při schválení (přechod do CONFIRMED) systém ověří kolize (BR-02) a pauzy (BR-04). Pokud by schválení porušilo pravidla, systém schválení nedovolí.
+REQ-04 (převzato z OP-03): Při souběžném schvalování dvou kolidujících žádostí se do stavu CONFIRMED dostane nejvýše jedna z nich.
 
 **Předpoklady:**
 - Rezervace existuje.
@@ -42,3 +43,5 @@ BR-02, BR-04
 - PENDING_APPROVAL + tatér schválí + volný čas → CONFIRMED.
 - PENDING_APPROVAL + uplyne 25 hodin → EXPIRED.
 - PENDING_APPROVAL + tatér zamítne → REJECTED.
+- dvě kolidující PENDING_APPROVAL schvalované souběžně → nejvýše jedna CONFIRMED, druhá zamítnuta (zůstává PENDING_APPROVAL).
+- schválení / zamítnutí rezervace, která není PENDING_APPROVAL → zamítnuto, stav se nemění.

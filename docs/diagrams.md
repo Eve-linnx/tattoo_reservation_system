@@ -110,7 +110,9 @@ flowchart TD
     R2 --> E
 ```
 
-### OP-03 — Confirm Reservation
+### OP-03 — Confirm Reservation (SUPERSEDED ve v0.2)
+
+> Ponecháno kvůli trasovatelnosti v0.1. Ve v0.2 je nahrazeno diagramem **OP-05 Approve** níže (DRAFT → PENDING_APPROVAL, potvrzení = schválení tatérem).
 
 ```mermaid
 flowchart TD
@@ -138,7 +140,9 @@ flowchart TD
     B -- Ne --> X1[Chyba — rezervace neexistuje]
     B -- Ano --> C{Stav = CANCELLED?}
     C -- Ano --> R1[Idempotentní úspěch — stav beze změny]
-    C -- Ne --> D{now < Reservation.start?}
+    C -- Ne --> S{Stav ∈ PENDING_APPROVAL, CONFIRMED?}
+    S -- Ne --> X3[Zamítnuto — REJECTED/EXPIRED jsou koncové stavy]
+    S -- Ano --> D{now < Reservation.start?}
     D -- Ne --> X2[Zamítnuto — čas začátku už nastal/uplynul]
     D -- Ano --> F[Nastav stav CANCELLED]
     F --> G[Rezervace přestane blokovat dostupnost tatéra]
@@ -146,20 +150,24 @@ flowchart TD
     X1 --> E([Konec])
     R1 --> E
     X2 --> E
+    X3 --> E
     H --> E
 ```
 
-### OP-05 —  Approve Reservation
+*Poznámka:* `now` i `Reservation.start` jsou lokální čas studia (rozhodnutí k C06 F3).
+
+### OP-05 — Approve Reservation
 
 ```mermaid
 flowchart TD
-    A([Start: Tatér reaguje na rezervaci X]) --> B{Zvolil tatér schválení?}
-    
-    B -- Ne --> Rej[Nastav stav na REJECTED]
-    
-    B -- Ano --> C{Rezervace je PENDING_APPROVAL?}
+    A([Start: Tatér reaguje na rezervaci X]) --> L[Zamkni tatéra — ADR-01\na znovu načti stav rezervace]
+    L --> C{Rezervace je PENDING_APPROVAL?}
     C -- Ne --> X1[Zamítnuto — neplatný zdrojový stav]
-    C -- Ano --> D[Znovu zkontroluj kolize vůči\nCONFIRMED rezervacím — BR-02/BR-04]
+    C -- Ano --> B{Zvolil tatér schválení?}
+
+    B -- Ne --> Rej[Nastav stav na REJECTED]
+
+    B -- Ano --> D[Znovu zkontroluj kolize vůči\nCONFIRMED rezervacím — BR-02/BR-04]
     
     D --> E{Nalezena kolize?}
     E -- Ano --> X2[Zamítnuto — rezervaci nelze potvrdit,\nnabídnuto zamítnutí]
@@ -171,6 +179,8 @@ flowchart TD
     X2 --> End
     G --> End
 ```
+
+*Poznámka (revize po C06):* kontrola zdrojového stavu je nyní **před** volbou schválit/zamítnout – zamítnout lze také jen `PENDING_APPROVAL` (shodně s kódem). Zámek tatéra zajišťuje REQ-04: při souběžném schvalování kolidujících žádostí projde kontrolou kolize nejvýše jedna.
 
 ---
 

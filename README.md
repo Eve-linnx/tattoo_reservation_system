@@ -42,6 +42,7 @@ Aplikace obsahuje sadu unit, architektonických a regresních testů napsaných 
 
 - `test_reservation_service.py` – unit testy odvozené z C05 DD + architektonický test (C03),
 - `test_c06_regression.py` – regresní testy k nálezům C06 F1–F3 (souběžné schválení, přechody stavů při zrušení, časová báze API).
+- `test_c08_cases.py` – krokované test cases C08 (TC-C08-01/02) přes API a skutečnou persistenci; výpis kroků: `pytest -v -s test_c08_cases.py`.
 
 Závislosti se instalují z kořenové složky projektu (krok 1), testy se spouští ze složky `src`:
 ```bash
@@ -74,6 +75,7 @@ Skript vytvoří testovací SQLite databázi, uloží do ní rezervace, ověří
       reservation_service.py        # Business logika (create/approve/cancel/availability)
       test_reservation_service.py   # Unit + architektonické testy (C03, C05)
       test_c06_regression.py        # Regresní testy k nálezům C06 (F1–F3)
+      test_c08_cases.py             # C08 test cases TC-C08-01/02 (API + persistence)
       test_spike.py                 # Demo / Spike A - ověření persistence
 
 ## CP1 walking skeleton

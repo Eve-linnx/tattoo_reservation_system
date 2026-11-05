@@ -159,3 +159,99 @@ v1.0-C05 (`592ec1b`) – původní stav; opravy `78c4c87` (větev `fix/c06-findi
 | Chyběla závislost `httpx` | API testy (FastAPI `TestClient`) na čistém prostředí nejdou spustit | přidáno do `requirements.txt` |
 
 **Zbývající riziko:** `requirements.txt` nemá pevné verze – čisté prostředí nainstalovalo novější verze než vývojové (FastAPI 0.162 vs. 0.141) a testy prošly, ale budoucí verze mohou chování změnit (např. zastaralé `@app.on_event`).
+
+---
+
+## C08 — Controlled Change: evidence
+
+Change Request, Impact Matrix, Options a rozhodnutí: `docs/intent-and-change.md` § C08 / CR-01.
+
+### Krok 0 — výchozí baseline
+
+| Položka | Hodnota |
+|---|---|
+| Commit | `230c45b` (větev `docs/c06-c08-sync`; kód beze změny od `78c4c87`) |
+| Spec | Baseline v0.2: REQ-06, REQ-07, REQ-08, BR-01, BR-02, BR-04 (`docs/spec/reservation-approve.md`, `reservation-rules.md`), stavový diagram 9b |
+| Architektura | ADR-01 (revize po C06 – zámek tatéra), G3, H1 |
+| Runtime | Windows 11, Python 3.14.3, FastAPI 0.141.1, Starlette 1.6.0, SQLAlchemy 2.0.53, SQLite 3.50.4, pytest 9.1.1, httpx 0.28.1 |
+| DB schéma | `Base.metadata.create_all` z `src/models.py` (tabulky `resources`, `reservations`), bez migrací / verze schématu |
+| Testovací konfigurace | izolovaná souborová SQLite v `tmp_path` pytestu, nová pro každý běh; produkční `tattoo_studio.db` se nepoužívá; žádná hesla ani tajemství |
+| Příprava dat | test data vytváří test přes API (`POST /reservations`, `/approve`), tatér `R1` vložen přímo (id=1, 09:00–18:00) |
+| Příkaz | `cd src && pytest -v -s test_c08_cases.py` |
+
+### C08 / TC-C08-01 — Schválení žádosti s přesně 30min pauzou (pozitivní)
+
+**Test basis / risk:** REQ-06, REQ-08, BR-01 (`[start, end)`), BR-02, BR-04 („přesně 30 minut je přípustných“) @ v0.2; riziko R-01.
+**Baseline, setup, command:** viz Krok 0; `src/test_c08_cases.py::test_TC_C08_01_approve_with_exact_30min_pause_succeeds`.
+**Preconditions + roles + initial state:** izolovaná DB; tatér R1; role tatéra (API bez autentizace – známé omezení). B1 a B2 vytvořeny jako `PENDING_APPROVAL`, poté tatér schválí B1.
+**Test data:** den D = dnes + 7 dní, lokální čas Europe/Prague. B1 = R1 [10:00, 11:00) `CONFIRMED`; B2 = R1 [11:30, 12:30) `PENDING_APPROVAL`.
+**Úprava proti vzoru zadání:** sousední [10,11) a [11,12) by u nás byly konflikt (BR-04 vyžaduje 30 min pauzu), proto pozitivní hranice = přesně 30 min mezera.
+
+| # | Action / input | Expected BEFORE execution | Actual AFTER execution (run 1 / run 2) | Evidence |
+|---|---|---|---|---|
+| 1 | Obnovit izolovaná data R1, B1, B2 | B1 `CONFIRMED`, B2 `PENDING_APPROVAL` | nová DB `c08_run1.db` / `c08_run2.db`, data vytvořena přes API | log testu |
+| 2 | Nezávisle přečíst uložené intervaly a stavy (sqlite3) | `(1, 10:00, 11:00, CONFIRMED)`, `(2, 11:30, 12:30, PENDING_APPROVAL)` | `[(1, '10:00', '11:00', 'CONFIRMED'), (2, '11:30', '12:30', 'PENDING_APPROVAL')]` / totéž | log `krok 2` |
+| 3 | `POST /reservations/2/approve {"is_approved": true}` | HTTP 200, `CONFIRMED` | `200 {'id': 2, 'status': 'CONFIRMED'}` / totéž | log `krok 3` |
+| 4 | Znovu načíst committed stav z persistence (sqlite3) | obě `CONFIRMED`, bez překryvu, pauza 30 min | `[(1, '10:00', '11:00', 'CONFIRMED'), (2, '11:30', '12:30', 'CONFIRMED')]` / totéž | log `krok 4` |
+| 5 | Reset dat a opakování se stejnými vstupy | stejný výsledek | run 2 = run 1 (assert v testu) | test PASS |
+
+**Final postcondition / independent persisted-state oracle:** přímý SQL dotaz `SELECT id, start_time, end_time, status FROM reservations` – dvě `CONFIRMED`, `[10:00,11:00)` a `[11:30,12:30)`.
+**Verdict:** **PASS** (2026-11-05, `230c45b`).
+**What is NOT covered:** souběžné schválení (pokrývá `test_F1_*`); pauza 29 min (kratší než povolená) – není samostatný test (C06 D4).
+
+### C08 / TC-C08-02 — Schválení žádosti, která se překrývá s potvrzenou (negativní)
+
+**Test basis / risk:** REQ-08, BR-02 @ v0.2; OP-05 alternativní výsledek „kolize při schvalování → schválení zamítne“; riziko R-01.
+**Baseline, setup, command:** viz Krok 0; `src/test_c08_cases.py::test_TC_C08_02_approve_of_overlapping_request_is_rejected`.
+**Preconditions + roles + initial state:** jako TC-C08-01. Pořadí: B1 i B2 vzniknou jako `PENDING_APPROVAL` (create kontroluje jen proti `CONFIRMED`, takže překryv dvou čekajících žádostí je přípustný), pak tatér schválí B1.
+**Test data:** den D = dnes + 7 dní. B1 = R1 [10:00, 11:00) `CONFIRMED`; B2 = R1 [10:30, 11:30) `PENDING_APPROVAL`.
+**Pozn.:** opačné pořadí ze vzoru (nejdřív `CONFIRMED` B1, pak create překrývající B2) přes API nejde – create ho odmítne (REQ-01). To je správné chování, ne blokace testu.
+
+| # | Action / input | Expected BEFORE execution | Actual AFTER execution (run 1 / run 2) | Evidence |
+|---|---|---|---|---|
+| 1 | Resetovat a připravit R1, B1, B2 | jen B1 `CONFIRMED` | nová DB, data přes API | log testu |
+| 2 | Nezávisle přečíst výchozí uložený stav | časový překryv existuje, ale jen jedno `CONFIRMED` | `[(1, '10:00', '11:00', 'CONFIRMED'), (2, '10:30', '11:30', 'PENDING_APPROVAL')]` / totéž | log `krok 2` |
+| 3 | `POST /reservations/2/approve {"is_approved": true}` | konflikt odmítnut: HTTP 400 s důvodem | `400 {'detail': 'Rezervaci nelze schválit, čas už je obsazen.'}` / totéž | log `krok 3` |
+| 4 | Přečíst uložený stav po rollbacku (sqlite3) | B1 beze změny `CONFIRMED`, B2 není `CONFIRMED` (zůstává `PENDING_APPROVAL`) | `[(1, '10:00', '11:00', 'CONFIRMED'), (2, '10:30', '11:30', 'PENDING_APPROVAL')]` / totéž | log `krok 4` |
+| 5 | Zopakovat po resetu | reprodukovatelný výsledek | run 2 = run 1 | test PASS |
+
+**Final postcondition / independent persisted-state oracle:** přímý SQL dotaz – právě jedno `CONFIRMED` pro R1 v intervalu [10:00, 11:30).
+**Verdict:** **PASS** (2026-11-05, `230c45b`).
+**What is NOT covered:** dvě souběžně schvalované kolidující žádosti (pokrývá `test_F1_concurrent_approve_*`, PASS); konflikt jen kvůli pauze (`_too_close`) – bez samostatného testu.
+
+### Navazující ověření pro CR-01 (C09)
+Test basis CR-01 (AC-01..AC-06) a seznam testů k napsání před implementací: `docs/intent-and-change.md` § CR-01 → „If ACCEPT“. Stav: **PLANNED** (ne IMPLEMENTED, ne VERIFIED).
+
+---
+
+## C07/C08 — B. Risk Assessment
+
+Reporting baseline: `230c45b` (2026-11-05). Klasifikace: L × I (1–2 LOW, 3–4 MEDIUM, 6–9 HIGH). Actual residual se snižuje jen tam, kde je opatření zavedeno **a ověřeno**.
+
+| ID | Kategorie | Příčina → nejistá událost → důsledek | Initial L/I | Zdůvodnění L/I |
+|---|---|---|---|---|
+| R-01 | Technical / Quality | Kontrola kolize a zápis při schválení nebyly atomické → dva tatéři / dvojklik schválí kolidující žádosti současně → double booking, porušení BR-02 | L=3 / I=3 → **HIGH (9)** | reprodukováno v C06 (F1); porušuje zásadní invariant |
+| R-02 | Technical / Quality | API porovnávalo UTC s lokálním časem → klient zruší rezervaci po jejím začátku → tatér přijde o termín, porušení BR-03 | L=3 / I=2 → **HIGH (6)** | reprodukováno v C06 (F3) pro každé zrušení v okně 1–2 h |
+| R-03 | Release / Operation | `requirements.txt` bez pevných verzí → čistá instalace před obhajobou stáhne novou nekompatibilní verzi (např. odstranění `@app.on_event`) → aplikace/testy na CP nepůjdou spustit | L=2 / I=3 → **HIGH (6)** | už teď se čistá instalace liší (FastAPI 0.162 vs. 0.141 lokálně); `on_event` je zastaralé |
+| R-04 | People / Resources | Všechny opravy C06/C08 dělala jedna členka (Rechbergová) → ostatní neumí při Technical Design Review obhájit zámek, časovou bázi a CR → ztráta bodů CP1, single point of failure | L=2 / I=2 → **MEDIUM (4)** | znalost je zatím jen u jedné osoby; obhajoba je týmová |
+| R-05 | Scope / Requirements | CR-01 volí línou expiraci → stakeholder čeká, že vypršelé žádosti zmizí samy (a ve frontendu dál blokují sloty) → přepracování na Option B před CP2 | L=2 / I=2 → **MEDIUM (4)** | rozhodnutí podmíněné souhlasem stakeholdera, peer review zatím chybí |
+| R-06 | Security / Privacy | API nemá autentizaci, admin PIN je natvrdo ve frontendu → kdokoli se znalostí ID schválí/zruší cizí rezervaci → ztráta důvěry, neoprávněná změna rezervace | L=1 / I=3 → **MEDIUM (3)** | aplikace běží jen lokálně pro demo (nízká L), dopad na rezervace by byl zásadní |
+| R-07 | Scope / Requirements | Pravidlo dostupnosti duplikované ve frontendu s jinou sémantikou → UI zablokuje volný slot (PENDING, 24 h předstih) → klient si nezarezervuje dostupný termín | L=2 / I=1 → **LOW (2)** | odchylka existuje (§ N), backend invariant chrání, dopad jen na UX |
+
+| ID | Strategy | Treatment & owner / due | Treatment evidence | Expected residual | Actual residual | Acceptance & contingency | Monitoring / trigger |
+|---|---|---|---|---|---|---|---|
+| R-01 | MITIGATE | zámek tatéra v `approve_reservation` (ADR-01 revize) + concurrency test; Rechbergová; hotovo 2026-11-05 | `78c4c87`; `test_F1_concurrent_*` PASS, s vypnutým zámkem FAIL; TC-C08-01/02 PASS | L=1 / I=3 → MEDIUM (3) | **L=1 / I=3 → MEDIUM (3)** – ověřeno na SQLite; na PostgreSQL NOT VERIFIED | přijímá tým; při přechodu na jinou DB zopakovat test F1 | trigger: změna DB, víc API instancí, test F1 selže |
+| R-02 | MITIGATE | jedna časová báze (lokální čas) v API i `created_at`; Rechbergová; hotovo 2026-11-05 | `78c4c87`; `test_F3_*` PASS (vč. hranice `now == start` a API se skutečnými hodinami) | L=1 / I=2 → LOW (2) | **L=1 / I=2 → LOW (2)** | přijímá tým; předpoklad: server v Europe/Prague (G4) | trigger: nasazení na server v jiné zóně, klient v jiné zóně |
+| R-03 | MITIGATE | připnout verze (`requirements.txt` podle ověřeného čistého prostředí) a zopakovat čistou instalaci; Rechbergová; do 2026-11-08 | zatím jen čisté spuštění bez pinů (§ C07/C08 Ověření čistého spuštění, PASS) | L=1 / I=3 → MEDIUM (3) | **NOT VERIFIED** (piny zatím nejsou) | contingency: předem připravené venv na prezentačním notebooku | trigger: čistá instalace / `pytest` selže, nová major verze FastAPI/Starlette |
+| R-04 | MITIGATE | 30min walkthrough pro tým (ADR-01, F1–F3, CR-01) + každá členka sama spustí README a testy; Rechbergová; do 2026-11-08 | – | L=1 / I=2 → LOW (2) | **NOT VERIFIED** | přijímá tým; contingency: technické dotazy směřovat na Rechbergovou | trigger: členka neumí vysvětlit F1/CR-01, chybí na prezentaci |
+| R-05 | MITIGATE | peer review CR-01 spolužákem + potvrzení stakeholdera (role tatéra) před C09; Rechbergová; do C09 | CR-01 zapsán (`docs/intent-and-change.md`), review chybí | L=1 / I=2 → LOW (2) | **NOT VERIFIED** | při nesouhlasu přejít na Option B | trigger: review/stakeholder požaduje proaktivní vypršení |
+| R-06 | ACCEPT | žádné opatření v CP1; zdokumentováno jako známé omezení (9a, OP-01, C06 Remaining gaps); Rechbergová | dokumentace `230c45b` | L=1 / I=3 → MEDIUM (3) | **L=1 / I=3 → MEDIUM (3)** (beze změny, vědomě přijato) | přijímá tým pro CP1; před nasazením mimo localhost nutná autentizace | trigger: nasazení mimo localhost, požadavek na role |
+| R-07 | ACCEPT | zdokumentováno jako odchylka (§ N); náprava = budoucí CR (endpoint `GET /availability`) | dokumentace `230c45b` | L=2 / I=1 → LOW (2) | **L=2 / I=1 → LOW (2)** | přijímá tým | trigger: stížnost na blokovaný volný slot, změna pravidla dostupnosti |
+
+**Open issues (už nastalé problémy, ne rizika):**
+| ID | Issue | Dopad | Owner | Next action |
+|---|---|---|---|---|
+| I-01 | REQ-07: automatická expirace v produktu neprobíhá | žádost lze schválit i po 24 h | Rechbergová | implementace CR-01 Option A v C09 |
+| I-02 | Check Availability nemá API endpoint, frontend počítá jinak (§ N) | duplicitní pravidlo, odchylka od REQ-02 | tým | rozhodnout o CR po CP1 |
+| I-03 | Chybějící testy: `_too_close` (pauza 29 min), `end <= start`, minulost, neznámý tatér, reject větev (C06 D4) | evidence pravidel BR-04/BR-01 jen kódem | Rechbergová | doplnit unit testy |
+| I-04 | Peer reviewer CR-01 není doplněn | rozhodnutí C08 bez nezávislého review | Rechbergová | doplnit jméno a výsledek review |

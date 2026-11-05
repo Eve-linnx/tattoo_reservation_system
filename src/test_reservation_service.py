@@ -64,10 +64,10 @@ def test_expire_old_reservations_changes_status_to_expired(db_session, setup_res
     r = create_reservation(db_session, setup_resource.id, "Klient", base_time, base_time + timedelta(hours=1))
     
     # Uměle posuneme created_at do minulosti
-    r.created_at = datetime.utcnow() - timedelta(hours=25)
+    r.created_at = datetime.now() - timedelta(hours=25)
     db_session.commit()
-    
-    expired_count = expire_old_reservations(db_session, datetime.utcnow())
+
+    expired_count = expire_old_reservations(db_session, datetime.now())
     
     assert expired_count == 1
     assert r.status == ReservationStatus.EXPIRED

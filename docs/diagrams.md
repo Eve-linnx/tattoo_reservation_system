@@ -43,6 +43,16 @@ Poznámky ke konzistenci:
 - Operace Confirm zanikla jako samostatný uživatelský případ a stala se součástí procesu Approve (OP-05).
 - Cancel má oba aktéry (Klient i Tatér), protože specifikace (BR-03) neomezuje zrušení jen na klienta.
 
+Stav implementace (k `78c4c87`) – diagram zobrazuje cílový rozsah v0.2, ne vše je v kódu:
+| Prvek diagramu | Implementováno? | Pozn. |
+|---|---|---|
+| Vytvořit rezervaci | ANO | `POST /reservations` + formulář v UI |
+| Schválit / Zamítnout | ANO | `POST /reservations/{id}/approve` + admin sekce UI |
+| Zrušit rezervaci | ČÁSTEČNĚ – jen API | `POST /reservations/{id}/cancel`; UI nemá tlačítko pro zrušení |
+| Zjistit dostupnost | ČÁSTEČNĚ – jen frontend | API endpoint neexistuje, sloty počítá UI – známá odchylka (`architecture-and-decisions.md` § N) |
+| Rozlišení aktérů Klient / Tatér | NE | backend role nerozlišuje; admin sekce UI je chráněna jen PINem natvrdo v `App.jsx` – známé omezení |
+| Notification Service | NE | plánovaná externí integrace, v kódu se nevolá |
+
 ---
 
 ## 9b — Stavový diagram životního cyklu Reservation
@@ -81,11 +91,11 @@ Kontrola konzistence s textem:
 
 ```mermaid
 flowchart TD
-    A([Start: Klient zadá tatéra a interval]) --> B{Je uživatel autorizován?}
+    A([Start: Klient zadá tatéra a interval]) --> B{start < end a start\nnení v minulosti? BR-01}
     B -- Ne --> X1[Zamítnuto — rezervace nevznikne]
     B -- Ano --> C{Tatér existuje?}
     C -- Ne --> X1
-    C -- Ano --> D{start < end a interval v pracovní době? BR-05}
+    C -- Ano --> D{Interval v pracovní době? BR-05}
     D -- Ne --> X1
     D -- Ano --> Ff{Koliduje s CONFIRMED rezervací? BR-02/BR-04}
     Ff -- Ano --> X1
@@ -94,6 +104,8 @@ flowchart TD
     X1 --> E([Konec])
     H --> E
 ```
+
+*Poznámka:* pořadí kontrol odpovídá `create_reservation()`. Kontrola „Je uživatel autorizován?“ (předpoklad v `reservation-create.md`) z diagramu odstraněna, protože v kódu neexistuje – autorizace je známé omezení mimo rozsah CP1.
 
 ### OP-02 — Check Availability
 
@@ -110,7 +122,11 @@ flowchart TD
     R2 --> E
 ```
 
-### OP-03 — Confirm Reservation
+*Poznámka (stav implementace):* logiku kroků C–D realizuje `check_availability()` v `reservation_service.py` (blokuje jen `CONFIRMED`, překryv + pauza). Krok B (validace tatéra a intervalu) funkce nedělá a API ji nevolá – dostupnost v běžícím produktu počítá frontend a blokuje navíc i `PENDING_APPROVAL`. Známá odchylka, viz `architecture-and-decisions.md` § N.
+
+### OP-03 — Confirm Reservation (SUPERSEDED ve v0.2)
+
+> Ponecháno kvůli trasovatelnosti v0.1. Ve v0.2 je nahrazeno diagramem **OP-05 Approve** níže (DRAFT → PENDING_APPROVAL, potvrzení = schválení tatérem).
 
 ```mermaid
 flowchart TD
@@ -138,7 +154,9 @@ flowchart TD
     B -- Ne --> X1[Chyba — rezervace neexistuje]
     B -- Ano --> C{Stav = CANCELLED?}
     C -- Ano --> R1[Idempotentní úspěch — stav beze změny]
-    C -- Ne --> D{now < Reservation.start?}
+    C -- Ne --> S{Stav ∈ PENDING_APPROVAL, CONFIRMED?}
+    S -- Ne --> X3[Zamítnuto — REJECTED/EXPIRED jsou koncové stavy]
+    S -- Ano --> D{now < Reservation.start?}
     D -- Ne --> X2[Zamítnuto — čas začátku už nastal/uplynul]
     D -- Ano --> F[Nastav stav CANCELLED]
     F --> G[Rezervace přestane blokovat dostupnost tatéra]
@@ -146,31 +164,40 @@ flowchart TD
     X1 --> E([Konec])
     R1 --> E
     X2 --> E
+    X3 --> E
     H --> E
 ```
 
-### OP-05 —  Approve Reservation
+*Poznámka:* `now` i `Reservation.start` jsou lokální čas studia (rozhodnutí k C06 F3).
+
+### OP-05 — Approve Reservation
 
 ```mermaid
 flowchart TD
-    A([Start: Tatér reaguje na rezervaci X]) --> B{Zvolil tatér schválení?}
-    
-    B -- Ne --> Rej[Nastav stav na REJECTED]
-    
-    B -- Ano --> C{Rezervace je PENDING_APPROVAL?}
+    A([Start: Tatér reaguje na rezervaci X]) --> N{Rezervace existuje?}
+    N -- Ne --> X0[Chyba — rezervace neexistuje]
+    N -- Ano --> L[Zamkni tatéra — ADR-01\na znovu načti stav rezervace]
+    L --> C{Rezervace je PENDING_APPROVAL?}
     C -- Ne --> X1[Zamítnuto — neplatný zdrojový stav]
-    C -- Ano --> D[Znovu zkontroluj kolize vůči\nCONFIRMED rezervacím — BR-02/BR-04]
+    C -- Ano --> B{Zvolil tatér schválení?}
+
+    B -- Ne --> Rej[Nastav stav na REJECTED]
+
+    B -- Ano --> D[Znovu zkontroluj kolize vůči\nCONFIRMED rezervacím — BR-02/BR-04]
     
     D --> E{Nalezena kolize?}
-    E -- Ano --> X2[Zamítnuto — rezervaci nelze potvrdit,\nnabídnuto zamítnutí]
+    E -- Ano --> X2[Zamítnuto — rezervaci nelze potvrdit,\nzůstává PENDING_APPROVAL – tatér ji může zamítnout]
     E -- Ne --> F[Nastav stav CONFIRMED]
     
     F --> G([Vrať potvrzení úspěchu])
     Rej --> G
-    X1 --> End([Konec])
+    X0 --> End([Konec])
+    X1 --> End
     X2 --> End
     G --> End
 ```
+
+*Poznámka (revize po C06):* kontrola zdrojového stavu je nyní **před** volbou schválit/zamítnout – zamítnout lze také jen `PENDING_APPROVAL` (shodně s kódem). Zámek tatéra zajišťuje REQ-04: při souběžném schvalování kolidujících žádostí projde kontrolou kolize nejvýše jedna.
 
 ---
 
@@ -179,7 +206,9 @@ flowchart TD
 | Kontrola | Výsledek |
 |---|---|
 | Create vs. Approve | Create nealokuje Resource, závazná alokace vzniká až po kladném schválení v Approve — shodné s textem i diagramy. |
-| Availability vs. Approve | PENDING_APPROVAL neblokuje dostupnost, blokuje ji až CONFIRMED. |
+| Availability vs. Approve | PENDING_APPROVAL neblokuje dostupnost, blokuje ji až CONFIRMED. Platí pro backend (`create`/`approve`/`check_availability`); frontend blokuje i PENDING_APPROVAL – známá odchylka (`architecture-and-decisions.md` § N). |
+| Approve vs. stavový diagram | Schválit i zamítnout lze jen PENDING_APPROVAL; při konfliktu zůstává PENDING_APPROVAL (shodně s kódem od `78c4c87`). |
+| Diagramy vs. kód | Ověřeno proti `78c4c87` (revize po C06); rozdíly cílového rozsahu jsou popsány u 9a a OP-02. |
 | Cancel vs. stavový diagram | Text i diagram shodně umožňují cancel z PENDING_APPROVAL i CONFIRMED před `start`. |
 | Význam intervalů | Všude `[start, end)` dle BR-01. |
 | Diagram případů užití vs. text | Nová operace OP-05 (Approve) je korektně zastoupena jako cíl tatéra, původní Confirm byl z Use Case diagramu odstraněn. |

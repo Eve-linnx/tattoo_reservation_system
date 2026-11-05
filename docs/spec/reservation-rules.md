@@ -19,14 +19,14 @@ V žádném potvrzeném stavu systému nesmí existovat dvě rezervace ve stavu
 `CONFIRMED`, které se překrývají a patří ke stejnému výhradnímu zdroji
 (`Resource`, v C01 tatér).
 
-`DRAFT` rezervace zdroj závazně neblokuje. Kontrola se provádí při vytvoření
-rezervace i znovu při jejím potvrzení, protože mezi těmito operacemi mohl
+`PENDING_APPROVAL` rezervace zdroj závazně neblokuje. Kontrola se provádí při vytvoření
+rezervace i znovu při jejím schválení, protože mezi těmito operacemi mohl
 jiný uživatel potvrdit kolidující rezervaci. Při souběžném potvrzování
 kolidujících návrhů může uspět nejvýše jeden pokus.
 
 ### BR-03 — Cancellation policy
 
-Rezervaci ve stavu `DRAFT` nebo `CONFIRMED` lze zrušit pouze před jejím
+Rezervaci ve stavu `PENDING_APPROVAL` nebo `CONFIRMED` lze zrušit pouze před jejím
 časem začátku (`now < start`). Zrušením se její stav změní na
 `CANCELLED` a rezervace přestane blokovat dostupnost zdroje.
 
@@ -43,7 +43,7 @@ pracoviště.
 
 Pravidlo platí před i po rezervaci a kontroluje se společně s BR-02. Přesně
 30 minut je přípustných; kratší pauza je konflikt. Zrušené a pouze konceptuální
-`DRAFT` rezervace se do této kontroly nezapočítávají.
+`PENDING_APPROVAL` rezervace se do této kontroly nezapočítávají.
 
 ### BR-05 — Pracovní doba zdroje
 
@@ -54,3 +54,7 @@ pracovní doby se zamítne.
 
 Pracovní doba se kontroluje při vytvoření rezervace. Dostupnost se nemění
 stavem žádné existující rezervace.
+
+---
+
+**Pozn. k Baseline v0.2:** stav `DRAFT` z v0.1 byl nahrazen stavem `PENDING_APPROVAL` (viz `architecture-and-decisions.md` § Dopad změny C02); „potvrzení“ v BR-02 znamená schválení tatérem (OP-05). Rezervace ve stavech `REJECTED` a `EXPIRED` jsou koncové a nelze je zrušit. Všechny časy (`start`, `end`, `now`, `created_at`) jsou lokální čas studia (Europe/Prague).

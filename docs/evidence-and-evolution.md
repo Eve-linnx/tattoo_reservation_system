@@ -158,7 +158,13 @@ v1.0-C05 (`592ec1b`) – původní stav; opravy `78c4c87` (větev `fix/c06-findi
 | README sekce 3: `pip install` uvedeno „ve složce src“ (soubor je v kořeni), chyběl konec bloku kódu | instalace podle README selže, zbytek README se vykreslil jako kód | přepsáno, demo přesunuto do sekce 4 |
 | Chyběla závislost `httpx` | API testy (FastAPI `TestClient`) na čistém prostředí nejdou spustit | přidáno do `requirements.txt` |
 
-**Zbývající riziko:** `requirements.txt` nemá pevné verze – čisté prostředí nainstalovalo novější verze než vývojové (FastAPI 0.162 vs. 0.141) a testy prošly, ale budoucí verze mohou chování změnit (např. zastaralé `@app.on_event`).
+**Zbývající riziko (stav po 1. běhu):** `requirements.txt` neměl pevné verze – čisté prostředí nainstalovalo novější verze než vývojové (FastAPI 0.162 vs. 0.141). Testy prošly, ale budoucí verze mohou chování změnit (např. zastaralé `@app.on_event`). → opatření R-03.
+
+**Opakované čisté spuštění s připnutými verzemi (R-03), 2026-11-05:**
+- `requirements.txt` připnut na přesnou sadu z 1. čistého běhu (5 přímých + 19 tranzitivních balíčků, `colorama` jen pro Windows). Podle metadat (`Requires-Python`) všechny podporují Python >= 3.11, nejpřísnější jsou SQLAlchemy 2.1.8 a Starlette 1.10.0.
+- Nová kopie repozitáře + nové venv: `pip install -r requirements.txt` PASS; `pip freeze` = obsah `requirements.txt`; `pytest` 19/19 PASS (C03/C05 + C06 + C08); `python test_spike.py` PASS; `uvicorn main:app`: `/resources`, create → `PENDING_APPROVAL`, approve → `CONFIRMED`, cancel → `CANCELLED` PASS.
+- Neověřeno: instalace na Pythonu 3.11 (na stroji je jen 3.14) a na jiném OS než Windows.
+- Pozn. pro vývojáře: lokální prostředí se staršími verzemi je potřeba přeinstalovat (`pip install -r requirements.txt`).
 
 ---
 
@@ -242,7 +248,7 @@ Reporting baseline: `230c45b` (2026-11-05). Klasifikace: L × I (1–2 LOW, 3–
 |---|---|---|---|---|---|---|---|
 | R-01 | MITIGATE | zámek tatéra v `approve_reservation` (ADR-01 revize) + concurrency test; Rechbergová; hotovo 2026-11-05 | `78c4c87`; `test_F1_concurrent_*` PASS, s vypnutým zámkem FAIL; TC-C08-01/02 PASS | L=1 / I=3 → MEDIUM (3) | **L=1 / I=3 → MEDIUM (3)** – ověřeno na SQLite; na PostgreSQL NOT VERIFIED | přijímá tým; při přechodu na jinou DB zopakovat test F1 | trigger: změna DB, víc API instancí, test F1 selže |
 | R-02 | MITIGATE | jedna časová báze (lokální čas) v API i `created_at`; Rechbergová; hotovo 2026-11-05 | `78c4c87`; `test_F3_*` PASS (vč. hranice `now == start` a API se skutečnými hodinami) | L=1 / I=2 → LOW (2) | **L=1 / I=2 → LOW (2)** | přijímá tým; předpoklad: server v Europe/Prague (G4) | trigger: nasazení na server v jiné zóně, klient v jiné zóně |
-| R-03 | MITIGATE | připnout verze (`requirements.txt` podle ověřeného čistého prostředí) a zopakovat čistou instalaci; Rechbergová; do 2026-11-08 | zatím jen čisté spuštění bez pinů (§ C07/C08 Ověření čistého spuštění, PASS) | L=1 / I=3 → MEDIUM (3) | **NOT VERIFIED** (piny zatím nejsou) | contingency: předem připravené venv na prezentačním notebooku | trigger: čistá instalace / `pytest` selže, nová major verze FastAPI/Starlette |
+| R-03 | MITIGATE | připnout verze (`requirements.txt` podle ověřeného čistého prostředí) a zopakovat čistou instalaci; Rechbergová; hotovo 2026-11-05 | připnuté `requirements.txt`; opakované čisté spuštění PASS (§ C07/C08 Ověření čistého spuštění) | L=1 / I=3 → MEDIUM (3) | **L=1 / I=3 → MEDIUM (3)** – ověřeno na Windows + Python 3.14; Python 3.11 a jiný OS NOT VERIFIED | contingency: předem připravené venv na prezentačním notebooku | trigger: čistá instalace / `pytest` selže, nová major verze FastAPI/Starlette |
 | R-04 | MITIGATE | 30min walkthrough pro tým (ADR-01, F1–F3, CR-01) + každá členka sama spustí README a testy; Rechbergová; do 2026-11-08 | – | L=1 / I=2 → LOW (2) | **NOT VERIFIED** | přijímá tým; contingency: technické dotazy směřovat na Rechbergovou | trigger: členka neumí vysvětlit F1/CR-01, chybí na prezentaci |
 | R-05 | MITIGATE | peer review CR-01 spolužákem + potvrzení stakeholdera (role tatéra) před C09; Rechbergová; do C09 | CR-01 zapsán (`docs/intent-and-change.md`), review chybí | L=1 / I=2 → LOW (2) | **NOT VERIFIED** | při nesouhlasu přejít na Option B | trigger: review/stakeholder požaduje proaktivní vypršení |
 | R-06 | ACCEPT | žádné opatření v CP1; zdokumentováno jako známé omezení (9a, OP-01, C06 Remaining gaps); Rechbergová | dokumentace `230c45b` | L=1 / I=3 → MEDIUM (3) | **L=1 / I=3 → MEDIUM (3)** (beze změny, vědomě přijato) | přijímá tým pro CP1; před nasazením mimo localhost nutná autentizace | trigger: nasazení mimo localhost, požadavek na role |

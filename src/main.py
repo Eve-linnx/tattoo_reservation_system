@@ -96,7 +96,8 @@ def api_approve_reservation(res_id: int, data: ApproveSchema, db: Session = Depe
 @app.post("/reservations/{res_id}/cancel")
 def api_cancel_reservation(res_id: int, db: Session = Depends(get_db)):
     try:
-        res = cancel_reservation(db, res_id, datetime.utcnow())
+        # Lokální čas – stejná časová báze jako start_time (F3, BR-03)
+        res = cancel_reservation(db, res_id, datetime.now())
         return {"id": res.id, "status": res.status.value}
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))

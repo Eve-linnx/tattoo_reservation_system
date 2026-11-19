@@ -53,6 +53,7 @@ class Reservation(Base):
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     status = Column(Enum(ReservationStatus), default=ReservationStatus.PENDING_APPROVAL, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Lokální čas – stejná časová báze jako start_time/end_time (F3)
+    created_at = Column(DateTime, default=datetime.now)
 
     resource = relationship("Resource", back_populates="reservations")

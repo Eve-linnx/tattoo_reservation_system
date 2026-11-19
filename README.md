@@ -37,22 +37,27 @@ Přejděte do složky frontend, nainstalujte balíčky a spusťte vývojový ser
 
 Aplikace poběží typicky na http://localhost:5173 (přesný port vypíše konzole).
 
-### 3. Spuštění automatizovaných testů (C03 & C05)
-Aplikace obsahuje sadu unit a architektonických testů napsaných v knihovně `pytest`. Tyto testy ověřují dodržení návrhového vzoru, validaci byznys pravidel a přechody stavů.
+### 3. Spuštění automatizovaných testů (C03, C05, C06)
+Aplikace obsahuje sadu unit, architektonických a regresních testů napsaných v knihovně `pytest`:
 
-Pro spuštění testů zadejte ve složce `src`:
+- `test_reservation_service.py` – unit testy odvozené z C05 DD + architektonický test (C03),
+- `test_c06_regression.py` – regresní testy k nálezům C06 F1–F3 (souběžné schválení, přechody stavů při zrušení, časová báze API).
+- `test_c08_cases.py` – krokované test cases C08 (TC-C08-01/02) přes API a skutečnou persistenci; výpis kroků: `pytest -v -s test_c08_cases.py`.
+
+Závislosti se instalují z kořenové složky projektu (krok 1), testy se spouští ze složky `src`:
 ```bash
 pip install -r requirements.txt
-pytest -v test_reservation_service.py
+cd src
+pytest -v
+```
 
-
-### Testování / Spike test
+### 4. Demo skript (Spike / Baseline v0.2)
 Pro spuštění demonstračního skriptu (ověření persistence), použijte:
 
     cd src
     python test_spike.py
 
-Skript vytvoří testovací SQLite databázi, uloží do ní rezervace, ověří business pravidla a načte data zpět z DB. Detaily a výsledky jsou zapsané v [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md).
+Skript vytvoří testovací SQLite databázi, uloží do ní rezervace, ověří business pravidla a načte data zpět z DB. Data jsou relativní k aktuálnímu datu. Detaily a výsledky jsou zapsané v [docs/evidence-and-evolution.md](docs/evidence-and-evolution.md).
 
 ## Struktura repozitáře
 
@@ -68,7 +73,10 @@ Skript vytvoří testovací SQLite databázi, uloží do ní rezervace, ověří
       main.py                       # FastAPI aplikace (Controller/API)
       models.py                     # SQLAlchemy modely (Resource, Reservation)
       reservation_service.py        # Business logika (create/approve/cancel/availability)
-      test_spike.py                 # Spike A - ověření persistence
+      test_reservation_service.py   # Unit + architektonické testy (C03, C05)
+      test_c06_regression.py        # Regresní testy k nálezům C06 (F1–F3)
+      test_c08_cases.py             # C08 test cases TC-C08-01/02 (API + persistence)
+      test_spike.py                 # Demo / Spike A - ověření persistence
 
 ## CP1 walking skeleton
 

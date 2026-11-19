@@ -7,11 +7,11 @@ Rezervace je stažena a přestane blokovat kapacitu tatéra (pokud ji blokovala)
 Uživatel nebo systém požádá o zrušení rezervace.
 
 **Pozorovatelný požadavek / požadavky:**
-REQ-05: Systém umožní zrušit DRAFT nebo CONFIRMED rezervaci, pokud ještě nenastal její čas začátku.
+REQ-05: Systém umožní zrušit PENDING_APPROVAL nebo CONFIRMED rezervaci, pokud ještě nenastal její čas začátku.
 
 **Předpoklady:**
 - Rezervace existuje.
-- Reservation.state ∈ {DRAFT, CONFIRMED}.
+- Reservation.state ∈ {PENDING_APPROVAL, CONFIRMED}.
 - Aktuální čas < Reservation.start.
 
 **Stav po úspěšném provedení:**
@@ -19,7 +19,7 @@ REQ-05: Systém umožní zrušit DRAFT nebo CONFIRMED rezervaci, pokud ještě n
 - rezervace přestane blokovat dostupnost tatéra.
 
 **Změna stavu:**
-DRAFT → CANCELLED
+PENDING_APPROVAL → CANCELLED
 CONFIRMED → CANCELLED
 
 **Odkaz na doménová pravidla / invarianty:**
@@ -33,12 +33,15 @@ BR-03
 
 **Alternativní / chybové výsledky:**
 - rezervace už je CANCELLED → idempotentní úspěch (vrátí OK, stav se nezmění);
-- čas začátku už nastal nebo uplynul → zamítnuto, zrušení není možné.
+- čas začátku už nastal nebo uplynul → zamítnuto, zrušení není možné;
+- rezervace je REJECTED nebo EXPIRED (koncový stav) → zamítnuto, stav se nemění.
 
 **Příklady ověření:**
-- DRAFT před začátkem → CANCELLED
+- PENDING_APPROVAL před začátkem → CANCELLED
 - CONFIRMED před začátkem → CANCELLED a tatér se pro daný čas uvolní
 - CONFIRMED po začátku → zamítnuto
+- CONFIRMED přesně v čase začátku (now == start) → zamítnuto
+- REJECTED / EXPIRED → zamítnuto, stav beze změny
 
 **Zdůvodnění / zdroj:**
 Zjednodušená politika pro C02 (Baseline v0.1). Neřešíme zatím složitější stornopoplatky ani specifické rušení ze strany samotného tatéra.

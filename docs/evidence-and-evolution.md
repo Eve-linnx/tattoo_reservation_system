@@ -226,7 +226,20 @@ Change Request, Impact Matrix, Options a rozhodnutí: `docs/intent-and-change.md
 **What is NOT covered:** dvě souběžně schvalované kolidující žádosti (pokrývá `test_F1_concurrent_approve_*`, PASS); konflikt jen kvůli pauze (`_too_close`) – bez samostatného testu.
 
 ### Navazující ověření pro CR-01 (C09)
-Test basis CR-01 (AC-01..AC-06) a seznam testů k napsání před implementací: `docs/intent-and-change.md` § CR-01 → „If ACCEPT“. Stav: **PLANNED** (ne IMPLEMENTED, ne VERIFIED).
+Test basis CR-01 (AC-01..AC-06): `docs/intent-and-change.md` § CR-01 → „If ACCEPT“.
+
+**C09 implementation record (working tree, after commit pending):**
+
+- **Before:** `230c45b` / kódová baseline `78c4c87`; `PENDING_APPROVAL` žádost bylo možné schválit i po 24 hodinách.
+- **Implemented delta:** `approve_reservation()` nyní po získání zámku a obnovení stavu ověřuje hranici `created_at <= current_time - 24h`. Při překročení uloží `EXPIRED`, provede commit a vyvolá `ReservationExpiredError`; API vrací HTTP 400. Stejná helper podmínka se používá i v `expire_old_reservations()`.
+- **Specification/config:** REQ-07 byl zpřesněn na „24 hodin nebo déle“ a expirace při pokusu o schválení. Schéma databáze se nemění, limit zůstává 24 hodin a časová báze je lokální `datetime`.
+- **Automated command:** `cd src && pytest -q -s test_c09_cases.py test_c08_cases.py test_c06_regression.py test_reservation_service.py`
+- **Observed result:** `24 passed` (2026-11-19). C09 testy ověřily 23:59 → `CONFIRMED`, 24:00 a 24:01 → HTTP/service odmítnutí a trvale uložený `EXPIRED`, dále mladší `REJECTED`. C08/C06 regrese prošly.
+- **Integration boundary:** FastAPI `TestClient` → SQLAlchemy → izolovaná souborová SQLite; výsledný stav je ověřen samostatným `sqlite3` čtením mimo ORM/API.
+- **Peer review:** **NOT RUN** – musí doplnit jiný člen týmu, včetně kontroly pořadí zámek → refresh → expiry guard → commit.
+- **Clean checkout:** **NOT RUN** – druhý člen musí zopakovat instalaci, testy a smoke check podle README v novém adresáři.
+- **Release identity:** **PENDING** – po review a clean checkout vytvořit after commit/tag, uvést artefakt, runtime, lockované závislosti a log.
+- **Decision:** **HOLD** do dokončení peer review, clean checkoutu a after commitu. Implementace a automatizované testy jsou hotové; samotné `24 passed` není release approval.
 
 ---
 

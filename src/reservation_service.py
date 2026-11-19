@@ -26,6 +26,19 @@ class OutsideWorkingHoursError(Exception):
     pass
 
 
+class ReservationExpiredError(Exception):
+    """Vyhodí se, když žádost překročila lhůtu pro schválení."""
+    pass
+
+
+EXPIRATION_HOURS = 24
+
+
+def _is_expired(created_at: datetime, current_time: datetime) -> bool:
+    """Vrátí True, pokud žádost dosáhla hranice 24 hodin."""
+    return created_at <= current_time - timedelta(hours=EXPIRATION_HOURS)
+
+
 def _overlaps(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
     """Vrátí True, pokud se dva časové intervaly překrývají."""
     return start_a < end_b and start_b < end_a
@@ -134,13 +147,21 @@ def _lock_resource(db: Session, resource_id: int) -> None:
     )
 
 
-def approve_reservation(db: Session, reservation_id: int, is_approved: bool) -> Reservation:
+def approve_reservation(
+    db: Session,
+    reservation_id: int,
+    is_approved: bool,
+    current_time: datetime | None = None,
+) -> Reservation:
     """
     OP-05: Tatér schválí (CONFIRMED) nebo zamítne (REJECTED) rezervaci.
 
     Kontrola stavu, kontrola kolizí (BR-02/BR-04) a zápis výsledku probíhají
     v jedné transakci pod zámkem tatéra (ADR-01, REQ-04).
     """
+    if current_time is None:
+        current_time = datetime.now()
+
     reservation = db.get(Reservation, reservation_id)
     if reservation is None:
         raise ValueError(f"Rezervace id={reservation_id} neexistuje.")
@@ -152,6 +173,13 @@ def approve_reservation(db: Session, reservation_id: int, is_approved: bool) -> 
 
         if reservation.status != ReservationStatus.PENDING_APPROVAL:
             raise ValueError(f"Nelze schvalovat rezervaci ve stavu {reservation.status.value}.")
+
+        if _is_expired(reservation.created_at, current_time):
+            reservation.status = ReservationStatus.EXPIRED
+            db.commit()
+            raise ReservationExpiredError(
+                f"Rezervace nebyla schválena do {EXPIRATION_HOURS} hodin a vypršela."
+            )
 
         if not is_approved:
             reservation.status = ReservationStatus.REJECTED
@@ -184,12 +212,11 @@ def expire_old_reservations(db: Session, current_time: datetime) -> int:
     REQ-07: Změní PENDING_APPROVAL starší než 24h na EXPIRED.
     Vrací počet expirovaných žádostí.
     """
-    threshold = current_time - timedelta(hours=24)
     expired_count = 0
     
     pending = db.query(Reservation).filter(Reservation.status == ReservationStatus.PENDING_APPROVAL).all()
     for res in pending:
-        if res.created_at <= threshold:
+        if _is_expired(res.created_at, current_time):
             res.status = ReservationStatus.EXPIRED
             expired_count += 1
             

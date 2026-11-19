@@ -12,6 +12,7 @@ from reservation_service import (
     cancel_reservation,
     check_availability,
     ReservationConflictError,
+    ReservationExpiredError,
     OutsideWorkingHoursError,
 )
 
@@ -88,9 +89,9 @@ def api_list_reservations(db: Session = Depends(get_db)):
 @app.post("/reservations/{res_id}/approve")
 def api_approve_reservation(res_id: int, data: ApproveSchema, db: Session = Depends(get_db)):
     try:
-        res = approve_reservation(db, res_id, data.is_approved)
+        res = approve_reservation(db, res_id, data.is_approved, datetime.now())
         return {"id": res.id, "status": res.status.value}
-    except (ReservationConflictError, ValueError) as err:
+    except (ReservationConflictError, ReservationExpiredError, ValueError) as err:
         raise HTTPException(status_code=400, detail=str(err))
 
 @app.post("/reservations/{res_id}/cancel")

@@ -37,12 +37,13 @@ Přejděte do složky frontend, nainstalujte balíčky a spusťte vývojový ser
 
 Aplikace poběží typicky na http://localhost:5173 (přesný port vypíše konzole).
 
-### 3. Spuštění automatizovaných testů (C03, C05, C06)
+### 3. Spuštění automatizovaných testů (C03, C05, C06, C08, C09)
 Aplikace obsahuje sadu unit, architektonických a regresních testů napsaných v knihovně `pytest`:
 
 - `test_reservation_service.py` – unit testy odvozené z C05 DD + architektonický test (C03),
 - `test_c06_regression.py` – regresní testy k nálezům C06 F1–F3 (souběžné schválení, přechody stavů při zrušení, časová báze API).
 - `test_c08_cases.py` – krokované test cases C08 (TC-C08-01/02) přes API a skutečnou persistenci; výpis kroků: `pytest -v -s test_c08_cases.py`.
+- `test_c09_cases.py` – nové integrační testy expirace z C09 (AC-01 až AC-05).
 
 Závislosti se instalují z kořenové složky projektu (krok 1), testy se spouští ze složky `src`:
 ```bash
